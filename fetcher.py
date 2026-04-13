@@ -1,3 +1,4 @@
+import time
 import yfinance as yf
 import requests
 import pandas as pd
@@ -5,6 +6,10 @@ from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Silence yfinance's own JSONDecodeError noise — we handle failures ourselves
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
 
 def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.DataFrame | None:
@@ -15,16 +20,30 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
     interval: "5m" for live, "1d" for Prophet training
     period:   "1d" for intraday, "1y" for Prophet
     """
-    try:
-        df = yf.download(
-            symbol,
-            period=period,
-            interval=interval,
-            progress=False,
-            auto_adjust=True,
-        )
-        if df is None or df.empty:
-            logger.warning(f"No candle data for {symbol}")
+    retries = 3
+    for attempt in range(1, retries + 1):
+        try:
+            df = yf.download(
+                symbol,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=True,
+            )
+            if df is None or df.empty:
+                if attempt < retries:
+                    logger.warning(f"No candle data for {symbol} (attempt {attempt}/{retries}), retrying...")
+                    time.sleep(2 ** attempt)  # 2s, 4s
+                    continue
+                logger.warning(f"No candle data for {symbol} after {retries} attempts")
+                return None
+            break  # success
+        except Exception as e:
+            if attempt < retries:
+                logger.warning(f"fetch_candles({symbol}) attempt {attempt}/{retries} failed: {e}, retrying...")
+                time.sleep(2 ** attempt)
+                continue
+            logger.error(f"fetch_candles({symbol}) failed after {retries} attempts: {e}")
             return None
 
         # Flatten MultiIndex columns if present (yfinance ≥ 0.2.x)
