@@ -21,6 +21,7 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
     period:   "1d" for intraday, "1y" for Prophet
     """
     retries = 3
+    df = None
     for attempt in range(1, retries + 1):
         try:
             df = yf.download(
@@ -30,32 +31,32 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
                 progress=False,
                 auto_adjust=True,
             )
-            if df is None or df.empty:
-                if attempt < retries:
-                    logger.warning(f"No candle data for {symbol} (attempt {attempt}/{retries}), retrying...")
-                    time.sleep(2 ** attempt)  # 2s, 4s
-                    continue
+            if df is not None and not df.empty:
+                break  # success
+            if attempt < retries:
+                logger.warning(f"No candle data for {symbol} (attempt {attempt}/{retries}), retrying...")
+                time.sleep(2 ** attempt)
+            else:
                 logger.warning(f"No candle data for {symbol} after {retries} attempts")
                 return None
-            break  # success
         except Exception as e:
             if attempt < retries:
                 logger.warning(f"fetch_candles({symbol}) attempt {attempt}/{retries} failed: {e}, retrying...")
                 time.sleep(2 ** attempt)
-                continue
-            logger.error(f"fetch_candles({symbol}) failed after {retries} attempts: {e}")
-            return None
+            else:
+                logger.error(f"fetch_candles({symbol}) failed after {retries} attempts: {e}")
+                return None
 
-        # Flatten MultiIndex columns if present (yfinance ≥ 0.2.x)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df.columns = [c.lower() for c in df.columns]
-        df.index.name = "datetime"
-        return df
-    except Exception as e:
-        logger.error(f"fetch_candles({symbol}): {e}")
+    if df is None or df.empty:
         return None
+
+    # Flatten MultiIndex columns if present (yfinance ≥ 0.2.x)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    df.columns = [c.lower() for c in df.columns]
+    df.index.name = "datetime"
+    return df
 
 
 def fetch_quote(symbol: str) -> dict | None:
