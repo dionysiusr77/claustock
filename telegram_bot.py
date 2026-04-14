@@ -156,6 +156,48 @@ def format_whale_alert(symbol: str, vol_ratio: float, score: int, auto_added: bo
     )
 
 
+def format_pnl(pnl: dict) -> str:
+    rows      = pnl.get("rows", [])
+    realized  = pnl.get("realized_pnl_idr", 0)
+    unrealized = pnl.get("unrealized_pnl_idr", 0)
+    total     = pnl.get("total_pnl_idr", 0)
+    capital   = pnl.get("capital", 1)
+    count     = pnl.get("signals_count", 0)
+    today     = datetime.now(WIB).strftime("%a %d %b %Y")
+
+    total_pct = total / capital * 100
+
+    lines = [
+        f"📊 <b>P&L HARI INI — {today}</b>",
+        f"Sinyal fired: <b>{count}</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if rows:
+        lines.append("")
+        for r in rows:
+            ticker = r["symbol"].replace(".JK", "")
+            pct    = r["pnl_pct"]
+            pnl_k  = r["pnl_idr"] / 1000
+            emoji  = "🟢" if pct >= 0 else "🔴"
+            lines.append(
+                f"{emoji} <b>{ticker}</b>  {r['entry']:,.0f} → {r['current']:,.0f}"
+                f"  ({pct:+.1f}%)  {pnl_k:+.0f}K IDR  x{r['lots']} lot"
+            )
+
+    lines += [
+        "",
+        f"Realized:   <b>{realized/1000:+.0f}K IDR</b>",
+        f"Unrealized: <b>{unrealized/1000:+.0f}K IDR</b>",
+        f"Total:      <b>{total/1000:+.0f}K IDR</b>  ({total_pct:+.2f}%)",
+    ]
+
+    if total < 0 and abs(total_pct) >= 2.0:
+        lines.append("⚠️ Mendekati daily loss limit!")
+
+    return "\n".join(lines)
+
+
 def format_watchlist_change(symbol: str, action: str, watchlist: list[str]) -> str:
     ticker = symbol.replace(".JK", "")
     verb   = "Added" if action == "add" else "Removed"

@@ -17,6 +17,7 @@ from news_fetcher import score_news_sentiment
 from scorer import score_stock, should_signal
 from ai_agent import get_ai_verdict
 from analyzer import analyze_stock
+from risk_manager import check_risk_gates, calc_lot_size, record_entry, get_pnl_summary
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -114,27 +115,29 @@ def scan_stocks():
 
             # Fire signal + AI verdict if score qualifies
             if should_signal(result):
-                ai = get_ai_verdict(symbol, {
-                    **result,
-                    "technical_score": s["technical"],
-                    "prophet_score":   s["prophet"],
-                    "foreign_score":   s["foreign"],
-                    "news_score":      s["news"],
-                })
-                result["ai_verdict"] = ai
-                logger.info(
-                    f"{symbol}: signal fired score={result['total_score']}"
-                    + (f" AI={ai['action']} conf={ai['confidence']}%" if ai else "")
-                )
-                msg = tg.format_signal_with_ai(symbol, {
-                    **result,
-                    "technical_score": s["technical"],
-                    "prophet_score":   s["prophet"],
-                    "foreign_score":   s["foreign"],
-                    "news_score":      s["news"],
-                }, ai)
-                tg.send_message(msg)
-                db.save_signal(symbol, {**result, "ai_verdict": ai})
+                allowed, reason = check_risk_gates(symbol)
+                if not allowed:
+                    logger.info(f"{symbol}: signal suppressed by risk gate — {reason}")
+                else:
+                    snapshot_for_ai = {
+                        **result,
+                        "technical_score": s["technical"],
+                        "prophet_score":   s["prophet"],
+                        "foreign_score":   s["foreign"],
+                        "news_score":      s["news"],
+                    }
+                    ai   = get_ai_verdict(symbol, snapshot_for_ai)
+                    lots = ai.get("lots", 1) if ai else calc_lot_size(result["price"], 50)
+                    result["ai_verdict"] = ai
+
+                    logger.info(
+                        f"{symbol}: signal fired score={result['total_score']}"
+                        + (f" AI={ai['action']} conf={ai['confidence']}% lots={lots}" if ai else "")
+                    )
+                    msg = tg.format_signal_with_ai(symbol, snapshot_for_ai, ai)
+                    tg.send_message(msg)
+                    db.save_signal(symbol, {**result, "ai_verdict": ai})
+                    record_entry(symbol, result["price"], lots)
 
         except Exception as e:
             logger.error(f"{symbol}: unexpected error — {e}")
@@ -339,6 +342,11 @@ def cmd_remove(args):
         tg.send_message(f"{symbol}.JK is not in the watchlist.")
 
 
+def cmd_pnl(_args):
+    pnl = get_pnl_summary()
+    tg.send_message(tg.format_pnl(pnl))
+
+
 def cmd_analyze(args):
     if not args:
         tg.send_message("Usage: /analyze BBCA")
@@ -361,6 +369,7 @@ def cmd_help(_args):
         "/news          — latest news headlines\n"
         "/add BBCA      — add stock to watchlist\n"
         "/remove BBCA   — remove stock from watchlist\n"
+        "/pnl           — today's signal P&L\n"
         "/analyze BBCA  — full fundamental + technical report\n"
         "/help          — this message"
     )
@@ -400,6 +409,7 @@ def main():
         "/news":     cmd_news,
         "/add":      cmd_add,
         "/remove":   cmd_remove,
+        "/pnl":      cmd_pnl,
         "/analyze":  cmd_analyze,
         "/help":     cmd_help,
     })
