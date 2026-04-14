@@ -24,13 +24,8 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
     df = None
     for attempt in range(1, retries + 1):
         try:
-            df = yf.download(
-                symbol,
-                period=period,
-                interval=interval,
-                progress=False,
-                auto_adjust=True,
-            )
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period=period, interval=interval, auto_adjust=True)
             if df is not None and not df.empty:
                 break  # success
             if attempt < retries:
@@ -49,10 +44,6 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
 
     if df is None or df.empty:
         return None
-
-    # Flatten MultiIndex columns if present (yfinance ≥ 0.2.x)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
 
     df.columns = [c.lower() for c in df.columns]
     df.index.name = "datetime"
