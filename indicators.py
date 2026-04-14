@@ -92,13 +92,14 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         else:
             ma_trend = "FLAT"
 
-        # Volume ratio: last bar vs 20-bar average
-        avg_vol = volume.rolling(20).mean().iloc[-1]
-        last_vol = volume.iloc[-1]
-        volume_ratio = round(float(last_vol / avg_vol), 2) if avg_vol and avg_vol > 0 else 1.0
+        # Volume ratio: use last *completed* candle (iloc[-2]) — iloc[-1] is the
+        # current in-progress bar and often reports 0 volume from yfinance
+        completed_vol = volume.iloc[-2] if len(volume) >= 2 else volume.iloc[-1]
+        avg_vol = volume.iloc[:-1].rolling(20).mean().iloc[-1]  # avg excludes live bar
+        volume_ratio = round(float(completed_vol / avg_vol), 2) if avg_vol and avg_vol > 0 else 1.0
 
-        # Candle pattern
-        candle_pattern = _detect_candle_pattern(df)
+        # Candle pattern — use completed candles only (drop live bar)
+        candle_pattern = _detect_candle_pattern(df.iloc[:-1])
 
         price = round(float(close.iloc[-1]), 2)
 
