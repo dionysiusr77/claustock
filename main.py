@@ -1,6 +1,6 @@
 """
-IDX Stock Bot — Phase 2 orchestrator
-Adds Prophet 5-day forecast + IDX foreign flow to each snapshot.
+IDX Stock Bot — Phase 3 orchestrator
+Full 4-layer scoring: Technical + Prophet + Foreign Flow + News Sentiment.
 Run: python main.py
 """
 
@@ -11,9 +11,10 @@ from datetime import datetime
 import pytz
 
 import config
-from fetcher import fetch_candles, fetch_quote, fetch_jci_summary, fetch_foreign_flow
+from fetcher import fetch_candles, fetch_jci_summary, fetch_foreign_flow
 from indicators import calculate_indicators
 from forecaster import forecast_5d, warmup_models
+from news_fetcher import score_news_sentiment
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 
@@ -54,32 +55,36 @@ def scan_stocks():
             # 4. Foreign flow (Layer 3)
             flow = fetch_foreign_flow(symbol)
 
-            # 5. Combine scores
-            tech_score    = tech["score"]                                     # 0–35
-            prophet_score = forecast["prophet_score"] if forecast else 0      # 0–25
-            foreign_score = flow["foreign_score"]     if flow     else 0      # 0–20
-            # news_score  = 0  — Phase 3
-            total_score   = tech_score + prophet_score + foreign_score
+            # 5. News sentiment (Layer 4) — cached 30 min, calls Claude Haiku
+            news = score_news_sentiment(symbol)
+
+            # 6. Combine scores
+            tech_score    = tech["score"]                                # 0–35
+            prophet_score = forecast["prophet_score"] if forecast else 0 # 0–25
+            foreign_score = flow["foreign_score"]     if flow     else 0 # 0–20
+            news_score    = news["score"]                                 # 0–20
+            total_score   = tech_score + prophet_score + foreign_score + news_score
 
             verdict = _verdict(total_score)
 
-            # 6. Log
+            # 7. Log
             logger.info(
                 f"{symbol:10s} | {tech['price']:>8.2f}"
-                f" | T={tech_score:>2d} P={prophet_score:>2d} F={foreign_score:>2d}"
-                f" | total={total_score:>2d}/80"
-                f" | {verdict}"
-                + (f" | Prophet {forecast['trend_pct']:+.1f}% {forecast['trend']}" if forecast else "")
-                + (f" | flow {flow['days_consecutive']:+d}d" if flow else "")
+                f" | T={tech_score:>2d} P={prophet_score:>2d}"
+                f" F={foreign_score:>2d} N={news_score:>2d}"
+                f" | total={total_score:>3d}/100 | {verdict}"
+                + (f" | {forecast['trend_pct']:+.1f}% {forecast['trend']}" if forecast else "")
+                + (f" | flow {flow['days_consecutive']:+d}d"                if flow     else "")
+                + (f" | {news['sentiment']}"                                if news     else "")
             )
 
-            # 7. Save snapshot
+            # 8. Save snapshot
             snapshot = {
                 "price":           tech["price"],
                 "technical_score": tech_score,
                 "prophet_score":   prophet_score,
                 "foreign_score":   foreign_score,
-                "news_score":      0,
+                "news_score":      news_score,
                 "total_score":     total_score,
                 "verdict":         verdict,
                 # Technical
@@ -96,13 +101,17 @@ def scan_stocks():
                 # Foreign flow
                 "net_foreign_buy_idr": flow["net_foreign_buy_idr"] if flow else None,
                 "days_consecutive":    flow["days_consecutive"]     if flow else None,
+                # News
+                "news_sentiment":  news["sentiment"],
+                "news_headline":   news["key_headline"],
                 # Meta
                 "reasons": (
                     tech["reasons"]
                     + (forecast["reasons"] if forecast else [])
-                    + (flow["reasons"]    if flow     else [])
+                    + (flow["reasons"]     if flow     else [])
+                    + news["reasons"]
                 ),
-                "phase": 2,
+                "phase": 3,
             }
             db.save_snapshot(symbol, snapshot)
 
@@ -111,12 +120,11 @@ def scan_stocks():
 
 
 def _verdict(score: int) -> str:
-    """Phase 2 max is 80/100 (no news layer yet)."""
-    if score >= 64:    # ~80% of 80
+    if score >= 80:
         return "STRONG BUY"
-    elif score >= 48:  # ~60% of 80
+    elif score >= 60:
         return "BUY"
-    elif score >= 32:  # ~40% of 80
+    elif score >= 40:
         return "WATCH"
     else:
         return "SKIP"
@@ -140,7 +148,7 @@ def eod_summary():
 
 def main():
     now = datetime.now(WIB)
-    logger.info("IDX Stock Bot — Phase 2 starting")
+    logger.info("IDX Stock Bot — Phase 3 starting")
     logger.info(f"Time: {now.strftime('%A %d %b %Y %H:%M WIB')}")
     logger.info(f"Trading day: {is_trading_day()} | Market open: {is_market_open()}")
     logger.info(f"Watchlist: {', '.join(config.STOCKS)}")
