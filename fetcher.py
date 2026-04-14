@@ -104,15 +104,50 @@ def fetch_foreign_flow(symbol: str) -> dict | None:
         # Calculate consecutive days (last 5 trading days)
         days_consecutive = _calc_consecutive_days(stock_code)
 
+        score, reasons = _score_foreign_flow(net, days_consecutive)
+
         return {
             "net_foreign_buy_idr":  net,
             "foreign_buy_vol":      data.get("foreignBuyVol", 0),
             "foreign_sell_vol":     data.get("foreignSellVol", 0),
             "days_consecutive":     days_consecutive,
+            "foreign_score":        score,
+            "reasons":              reasons,
         }
     except Exception as e:
         logger.error(f"fetch_foreign_flow({symbol}): {e}")
         return None
+
+
+def _score_foreign_flow(net_idr: float, days_consecutive: int) -> tuple[int, list[str]]:
+    """
+    Score foreign flow 0–20 pts.
+    days_consecutive >= +3  → 20 pts (strong bullish)
+    days_consecutive == +2  → 15 pts
+    days_consecutive == +1  → 10 pts
+    net == 0 / no data      →  5 pts
+    days_consecutive negative → 0 pts
+    """
+    reasons = []
+    net_b = round(net_idr / 1_000_000_000, 2) if net_idr else 0  # in billions IDR
+
+    if days_consecutive >= 3:
+        score = 20
+        reasons.append(f"Foreign net BUY {days_consecutive}d in a row (+{net_b:.1f}B IDR)")
+    elif days_consecutive == 2:
+        score = 15
+        reasons.append(f"Foreign net BUY 2d in a row (+{net_b:.1f}B IDR)")
+    elif days_consecutive == 1:
+        score = 10
+        reasons.append(f"Foreign net BUY today (+{net_b:.1f}B IDR)")
+    elif days_consecutive == 0:
+        score = 5
+        reasons.append("Foreign flow neutral")
+    else:
+        score = 0
+        reasons.append(f"Foreign net SELL {abs(days_consecutive)}d in a row ({net_b:.1f}B IDR)")
+
+    return score, reasons
 
 
 def _calc_consecutive_days(stock_code: str, lookback: int = 5) -> int:
