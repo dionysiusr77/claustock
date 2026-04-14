@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Stocks ────────────────────────────────────
+# Default watchlist — loaded into runtime watchlist on first start
 STOCKS = [
     "BBCA.JK",
     "BBRI.JK",
@@ -14,6 +15,27 @@ STOCKS = [
     "BMRI.JK",
     "UNVR.JK",
 ]
+
+# Broader universe scanned for whale detection (high volume surges)
+# LQ45 + IDX80 liquid names — not all are in the default watchlist
+UNIVERSE = [
+    # Default watchlist
+    "BBCA.JK", "BBRI.JK", "TLKM.JK", "ASII.JK",
+    "GOTO.JK", "BREN.JK", "BMRI.JK", "UNVR.JK",
+    # Extended LQ45 / IDX80
+    "ANTM.JK", "INDF.JK", "KLBF.JK", "MDKA.JK",
+    "MEDC.JK", "MIKA.JK", "PGAS.JK", "PTBA.JK",
+    "SMGR.JK", "TBIG.JK", "TPIA.JK", "ADRO.JK",
+    "AMRT.JK", "CPIN.JK", "EMTK.JK", "EXCL.JK",
+    "HMSP.JK", "ICBP.JK", "INCO.JK", "INKP.JK",
+    "ISAT.JK", "MNCN.JK", "SIDO.JK", "TOWR.JK",
+]
+
+# Whale scanner settings
+WHALE_TOP_N           = 3     # number of high-volume stocks to surface per scan
+WHALE_VOL_THRESHOLD   = 3.0   # volume ratio must be >= this to qualify
+WHALE_MIN_SCORE       = 55    # minimum tech score (0-35 scale) to auto-add
+WHALE_AUTO_ADD        = True  # if True, auto-add to watchlist; else just notify
 
 # ── Timeframes ────────────────────────────────
 CANDLE_INTERVAL = "5m"    # 5-minute candles during market

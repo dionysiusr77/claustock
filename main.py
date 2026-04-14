@@ -1,6 +1,7 @@
 """
-IDX Stock Bot — Phase 4
-Full pipeline: 4-layer scoring → Telegram signals + briefings + commands.
+IDX Stock Bot — Phase 5
+Full pipeline: 4-layer scoring → AI verdict → Telegram signals + briefings + commands.
+Includes: dynamic watchlist (/add /remove) + whale scanner.
 Run: python main.py
 """
 
@@ -14,6 +15,7 @@ from indicators import calculate_indicators
 from forecaster import forecast_5d, warmup_models
 from news_fetcher import score_news_sentiment
 from scorer import score_stock, should_signal
+from ai_agent import get_ai_verdict
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -27,11 +29,63 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-# Latest scores kept in memory for Telegram commands
+# ── Runtime state ─────────────────────────────────────────────────────────────
+# Watchlist is dynamic — persisted in Firestore, mutated by /add /remove + whale scanner
+_watchlist: list[str] = []
 _latest_scores: list[dict] = []
 
 
+# ── Watchlist helpers ─────────────────────────────────────────────────────────
+
+def get_watchlist() -> list[str]:
+    return _watchlist
+
+
+def add_to_watchlist(symbol: str) -> bool:
+    """Add symbol to watchlist. Returns False if already present."""
+    sym = symbol.upper()
+    if not sym.endswith(".JK"):
+        sym += ".JK"
+    if sym in _watchlist:
+        return False
+    _watchlist.append(sym)
+    db.save_watchlist(_watchlist)
+    return True
+
+
+def remove_from_watchlist(symbol: str) -> bool:
+    """Remove symbol from watchlist. Returns False if not found."""
+    sym = symbol.upper()
+    if not sym.endswith(".JK"):
+        sym += ".JK"
+    if sym not in _watchlist:
+        return False
+    _watchlist.remove(sym)
+    db.save_watchlist(_watchlist)
+    return True
+
+
 # ── Core scan ─────────────────────────────────────────────────────────────────
+
+def _scan_symbol(symbol: str) -> dict | None:
+    """Fetch + score a single symbol. Returns result dict or None."""
+    df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="5d")
+    if df is None:
+        logger.warning(f"{symbol}: no candle data, skipping")
+        return None
+
+    tech = calculate_indicators(df)
+    if tech is None:
+        logger.warning(f"{symbol}: indicator calc failed, skipping")
+        return None
+
+    forecast = forecast_5d(symbol)
+    flow     = fetch_foreign_flow(symbol)
+    news     = score_news_sentiment(symbol)
+    result   = score_stock(symbol, tech, forecast, flow, news)
+    result["symbol"] = symbol
+    return result
+
 
 def scan_stocks():
     global _latest_scores
@@ -39,26 +93,13 @@ def scan_stocks():
     logger.info(f"── Scan @ {now_wib} ──────────────────────────")
 
     scores = []
-    for symbol in config.STOCKS:
+    for symbol in list(_watchlist):
         try:
-            df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="5d")
-            if df is None:
-                logger.warning(f"{symbol}: no candle data, skipping")
+            result = _scan_symbol(symbol)
+            if result is None:
                 continue
 
-            tech     = calculate_indicators(df)
-            if tech is None:
-                logger.warning(f"{symbol}: indicator calc failed, skipping")
-                continue
-
-            forecast = forecast_5d(symbol)
-            flow     = fetch_foreign_flow(symbol)
-            news     = score_news_sentiment(symbol)
-
-            result   = score_stock(symbol, tech, forecast, flow, news)
-            result["symbol"] = symbol
             scores.append(result)
-
             s = result["scores"]
             logger.info(
                 f"{symbol:10s} | {result['price']:>8.2f}"
@@ -68,44 +109,112 @@ def scan_stocks():
             )
 
             # Save snapshot
-            db.save_snapshot(symbol, {
-                "price":               result["price"],
-                "technical_score":     s["technical"],
-                "prophet_score":       s["prophet"],
-                "foreign_score":       s["foreign"],
-                "news_score":          s["news"],
-                "total_score":         result["total_score"],
-                "verdict":             result["verdict"],
-                "rsi":                 result["rsi"],
-                "ma_trend":            result["ma_trend"],
-                "volume_ratio":        result["volume_ratio"],
-                "candle_pattern":      result["candle_pattern"],
-                "forecast_5d":         result["forecast_5d"],
-                "trend_pct":           result["trend_pct"],
-                "trend":               result["trend"],
-                "net_foreign_buy_idr": result["net_foreign_buy_idr"],
-                "days_consecutive":    result["days_consecutive"],
-                "news_sentiment":      result["news_sentiment"],
-                "news_headline":       result["news_headline"],
-                "reasons":             result["reasons"],
-                "phase":               4,
-            })
+            _save_snapshot(symbol, result)
 
-            # Fire Telegram signal if score qualifies
+            # Fire signal + AI verdict if score qualifies
             if should_signal(result):
-                logger.info(f"{symbol}: signal fired (score={result['total_score']})")
-                msg = tg.format_signal(symbol, {**result, **result["scores"],
-                                                "technical_score": s["technical"],
-                                                "prophet_score":   s["prophet"],
-                                                "foreign_score":   s["foreign"],
-                                                "news_score":      s["news"]})
+                ai = get_ai_verdict(symbol, {
+                    **result,
+                    "technical_score": s["technical"],
+                    "prophet_score":   s["prophet"],
+                    "foreign_score":   s["foreign"],
+                    "news_score":      s["news"],
+                })
+                result["ai_verdict"] = ai
+                logger.info(
+                    f"{symbol}: signal fired score={result['total_score']}"
+                    + (f" AI={ai['action']} conf={ai['confidence']}%" if ai else "")
+                )
+                msg = tg.format_signal_with_ai(symbol, {
+                    **result,
+                    "technical_score": s["technical"],
+                    "prophet_score":   s["prophet"],
+                    "foreign_score":   s["foreign"],
+                    "news_score":      s["news"],
+                }, ai)
                 tg.send_message(msg)
-                db.save_signal(symbol, result)
+                db.save_signal(symbol, {**result, "ai_verdict": ai})
 
         except Exception as e:
             logger.error(f"{symbol}: unexpected error — {e}")
 
     _latest_scores = scores
+
+
+def _save_snapshot(symbol: str, result: dict):
+    s = result["scores"]
+    db.save_snapshot(symbol, {
+        "price":               result["price"],
+        "technical_score":     s["technical"],
+        "prophet_score":       s["prophet"],
+        "foreign_score":       s["foreign"],
+        "news_score":          s["news"],
+        "total_score":         result["total_score"],
+        "verdict":             result["verdict"],
+        "rsi":                 result.get("rsi"),
+        "ma_trend":            result.get("ma_trend"),
+        "volume_ratio":        result.get("volume_ratio"),
+        "candle_pattern":      result.get("candle_pattern"),
+        "forecast_5d":         result.get("forecast_5d"),
+        "trend_pct":           result.get("trend_pct"),
+        "trend":               result.get("trend"),
+        "net_foreign_buy_idr": result.get("net_foreign_buy_idr"),
+        "days_consecutive":    result.get("days_consecutive"),
+        "news_sentiment":      result.get("news_sentiment"),
+        "news_headline":       result.get("news_headline"),
+        "reasons":             result.get("reasons", []),
+        "phase":               5,
+    })
+
+
+# ── Whale scanner ─────────────────────────────────────────────────────────────
+
+def whale_scan():
+    """
+    Scan the broader UNIVERSE for abnormal volume surges.
+    Surfaces top N stocks by volume ratio that aren't already in watchlist.
+    If WHALE_AUTO_ADD is True and tech score qualifies, adds to watchlist.
+    """
+    candidates = [s for s in config.UNIVERSE if s not in _watchlist]
+    if not candidates:
+        return
+
+    logger.info(f"Whale scan — checking {len(candidates)} universe stocks for volume surges")
+    surges = []
+
+    for symbol in candidates:
+        try:
+            df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="5d")
+            if df is None:
+                continue
+            tech = calculate_indicators(df)
+            if tech is None:
+                continue
+            if tech["volume_ratio"] >= config.WHALE_VOL_THRESHOLD:
+                surges.append((symbol, tech["volume_ratio"], tech["score"], tech))
+        except Exception as e:
+            logger.warning(f"Whale scan {symbol}: {e}")
+
+    if not surges:
+        logger.info("Whale scan complete — no surges found")
+        return
+
+    # Sort by volume ratio, take top N
+    surges.sort(key=lambda x: x[1], reverse=True)
+    top = surges[:config.WHALE_TOP_N]
+
+    logger.info(f"Whale scan — {len(top)} surge(s) found: {[s[0] for s in top]}")
+
+    for symbol, vol_ratio, tech_score, tech in top:
+        auto_added = False
+        if config.WHALE_AUTO_ADD and tech_score >= config.WHALE_MIN_SCORE:
+            added = add_to_watchlist(symbol)
+            if added:
+                auto_added = True
+                logger.info(f"Whale: auto-added {symbol} to watchlist (vol={vol_ratio:.1f}x score={tech_score})")
+
+        msg = tg.format_whale_alert(symbol, vol_ratio, tech_score, auto_added)
+        tg.send_message(msg)
 
 
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
@@ -121,13 +230,12 @@ def presession2():
 
 
 def _send_briefing(session: int):
-    jci    = fetch_jci_summary()
-    scores = _latest_scores or []
-    msg    = tg.format_presession_briefing(
+    jci = fetch_jci_summary()
+    msg = tg.format_presession_briefing(
         session=session,
         date_str=datetime.now(WIB).strftime("%a %d %b %Y"),
         jci=jci,
-        stock_scores=scores,
+        stock_scores=_latest_scores,
     )
     tg.send_message(msg)
 
@@ -135,28 +243,25 @@ def _send_briefing(session: int):
 def eod_summary():
     logger.info("Running end-of-day summary")
     signals = db.get_today_signals()
-    msg     = tg.format_eod_summary(_latest_scores, signals)
+    msg = tg.format_eod_summary(_latest_scores, signals)
     tg.send_message(msg)
 
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
 def cmd_status(_args):
-    msg = tg.format_status(is_market_open(), is_trading_day(), len(config.STOCKS))
-    tg.send_message(msg)
+    tg.send_message(tg.format_status(is_market_open(), is_trading_day(), len(_watchlist)))
 
 
 def cmd_stocks(_args):
     if not _latest_scores:
         tg.send_message("No scores yet — waiting for first scan.")
         return
-    msg = tg.format_stocks_list(_latest_scores)
-    tg.send_message(msg)
+    tg.send_message(tg.format_stocks_list(_latest_scores))
 
 
 def cmd_briefing(_args):
-    now = datetime.now(WIB)
-    session = 1 if now.hour < 12 else 2
+    session = 1 if datetime.now(WIB).hour < 12 else 2
     _send_briefing(session)
 
 
@@ -166,37 +271,38 @@ def cmd_forecast(_args):
         return
     lines = ["📈 <b>5-Day Forecasts</b>", ""]
     for s in _latest_scores:
-        ticker  = s["symbol"].replace(".JK", "")
-        pct     = s.get("trend_pct")
-        trend   = s.get("trend", "—")
-        f5d     = s.get("forecast_5d")
-        price   = s.get("price", 0)
-        t_emoji = tg.TREND_EMOJI.get(trend, "⚪")
+        ticker = s["symbol"].replace(".JK", "")
+        pct    = s.get("trend_pct")
+        trend  = s.get("trend", "—")
+        f5d    = s.get("forecast_5d")
+        price  = s.get("price", 0)
+        t_e    = tg.TREND_EMOJI.get(trend, "⚪")
         if pct is not None:
-            lines.append(f"{t_emoji} <b>{ticker}</b>  {price:,.0f} → {f5d:,.0f}  ({pct:+.1f}%)")
+            lines.append(f"{t_e} <b>{ticker}</b>  {price:,.0f} → {f5d:,.0f}  ({pct:+.1f}%)")
         else:
             lines.append(f"⚪ <b>{ticker}</b>  No forecast")
     tg.send_message("\n".join(lines))
 
 
 def cmd_flow(_args):
+    if not _latest_scores:
+        tg.send_message("No flow data yet.")
+        return
     lines = ["🌊 <b>Foreign Flow Today</b>", ""]
     for s in _latest_scores:
         ticker = s["symbol"].replace(".JK", "")
         days   = s.get("days_consecutive", 0) or 0
         net    = s.get("net_foreign_buy_idr", 0) or 0
         net_b  = net / 1_000_000_000
-        if days > 0:
-            emoji = "🟢"
-        elif days < 0:
-            emoji = "🔴"
-        else:
-            emoji = "⚪"
+        emoji  = "🟢" if days > 0 else ("🔴" if days < 0 else "⚪")
         lines.append(f"{emoji} <b>{ticker}</b>  {net_b:+.2f}B IDR  ({days:+d}d)")
-    tg.send_message("\n".join(lines) if len(lines) > 2 else "No flow data yet.")
+    tg.send_message("\n".join(lines))
 
 
 def cmd_news(_args):
+    if not _latest_scores:
+        tg.send_message("No news data yet.")
+        return
     lines = ["📰 <b>Latest News</b>", ""]
     for s in _latest_scores:
         ticker   = s["symbol"].replace(".JK", "")
@@ -208,27 +314,58 @@ def cmd_news(_args):
     tg.send_message("\n".join(lines) if len(lines) > 2 else "No news data yet.")
 
 
+def cmd_add(args):
+    if not args:
+        tg.send_message("Usage: /add BBCA")
+        return
+    symbol = args[0].upper()
+    if add_to_watchlist(symbol):
+        tg.send_message(tg.format_watchlist_change(symbol, "add", _watchlist))
+        logger.info(f"Watchlist: added {symbol}")
+    else:
+        tg.send_message(f"{symbol}.JK is already in the watchlist.")
+
+
+def cmd_remove(args):
+    if not args:
+        tg.send_message("Usage: /remove BBCA")
+        return
+    symbol = args[0].upper()
+    if remove_from_watchlist(symbol):
+        tg.send_message(tg.format_watchlist_change(symbol, "remove", _watchlist))
+        logger.info(f"Watchlist: removed {symbol}")
+    else:
+        tg.send_message(f"{symbol}.JK is not in the watchlist.")
+
+
 def cmd_help(_args):
     tg.send_message(
         "🤖 <b>IDX Bot Commands</b>\n\n"
-        "/status   — bot + market status\n"
-        "/stocks   — current scores for all stocks\n"
-        "/briefing — trigger pre-session briefing now\n"
-        "/forecast — 5-day price forecasts\n"
-        "/flow     — today's foreign flow\n"
-        "/news     — latest news headlines\n"
-        "/help     — this message"
+        "/status        — bot + market status\n"
+        "/stocks        — current scores for all stocks\n"
+        "/briefing      — trigger pre-session briefing now\n"
+        "/forecast      — 5-day price forecasts\n"
+        "/flow          — today's foreign flow\n"
+        "/news          — latest news headlines\n"
+        "/add BBCA      — add stock to watchlist\n"
+        "/remove BBCA   — remove stock from watchlist\n"
+        "/help          — this message"
     )
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def main():
+    global _watchlist
+
     now = datetime.now(WIB)
-    logger.info("IDX Stock Bot — Phase 4 starting")
+    logger.info("IDX Stock Bot — Phase 5 starting")
     logger.info(f"Time: {now.strftime('%A %d %b %Y %H:%M WIB')}")
     logger.info(f"Trading day: {is_trading_day()} | Market open: {is_market_open()}")
-    logger.info(f"Watchlist: {', '.join(config.STOCKS)}")
+
+    # Load persisted watchlist (falls back to config.STOCKS)
+    _watchlist = db.get_watchlist()
+    logger.info(f"Watchlist ({len(_watchlist)}): {', '.join(_watchlist)}")
 
     jci = fetch_jci_summary()
     if jci:
@@ -237,8 +374,8 @@ def main():
             f" | Foreign net: {jci['total_foreign_net_idr']}"
         )
 
-    # Pre-compute forecasts
-    warmup_models(config.STOCKS)
+    # Pre-compute forecasts for current watchlist
+    warmup_models(_watchlist)
 
     # Start Telegram command poller in background
     poller = tg.CommandPoller({
@@ -248,6 +385,8 @@ def main():
         "/forecast": cmd_forecast,
         "/flow":     cmd_flow,
         "/news":     cmd_news,
+        "/add":      cmd_add,
+        "/remove":   cmd_remove,
         "/help":     cmd_help,
     })
     poller.start()
@@ -255,10 +394,15 @@ def main():
     # Immediate scan
     scan_stocks()
 
-    # Start scheduler
+    # Whale scan runs alongside normal scan every 5 min
+    def scan_and_whale():
+        scan_stocks()
+        if is_market_open():
+            whale_scan()
+
     logger.info(f"Scheduler started — scan every {config.SCAN_INTERVAL_SEC}s during market hours")
     scheduler = build_scheduler(
-        scan_fn=scan_stocks,
+        scan_fn=scan_and_whale,
         presession1_fn=presession1,
         presession2_fn=presession2,
         eod_fn=eod_summary,

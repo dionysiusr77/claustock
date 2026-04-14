@@ -196,6 +196,32 @@ def get_bot_config() -> dict:
     }
 
 
+def get_watchlist() -> list[str]:
+    """Load persisted watchlist from Firestore. Falls back to config.STOCKS."""
+    try:
+        cfg = get_bot_config()
+        stocks = cfg.get("stocks")
+        if stocks and isinstance(stocks, list):
+            return stocks
+    except Exception as e:
+        logger.error(f"get_watchlist: {e}")
+    return list(config.STOCKS)
+
+
+def save_watchlist(stocks: list[str]) -> bool:
+    """Persist current watchlist to Firestore."""
+    try:
+        db = _get_db()
+        db.collection("idx_bot_config").document("settings").set(
+            {"stocks": stocks, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"save_watchlist: {e}")
+        return False
+
+
 def save_bot_config(settings: dict) -> bool:
     try:
         db = _get_db()

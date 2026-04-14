@@ -57,7 +57,7 @@ def send_message(text: str, parse_mode: str = "HTML") -> bool:
 
 # ── Message formatters ────────────────────────────────────────────────────────
 
-def format_signal(symbol: str, snapshot: dict) -> str:
+def format_signal_with_ai(symbol: str, snapshot: dict, ai: dict | None) -> str:
     """Format a live signal alert matching the spec in BRIEF.md."""
     ticker  = symbol.replace(".JK", "")
     price   = snapshot.get("price", 0)
@@ -85,6 +85,43 @@ def format_signal(symbol: str, snapshot: dict) -> str:
     sl         = round(price * (1 - sl_pct / 100))
     rr         = round(target_pct / sl_pct, 1)
 
+    # Use AI verdict if available, otherwise fall back to rule-based
+    if ai and ai.get("action") == "ENTER":
+        entry  = ai.get("entry_price", price)
+        target = ai.get("target_price", round(price * 1.02))
+        sl     = ai.get("stop_loss",    round(price * 0.988))
+        t_pct  = ai.get("target_pct",   2.0)
+        sl_pct = ai.get("stop_loss_pct", 1.2)
+        rr     = ai.get("risk_reward",   round(t_pct / sl_pct, 1))
+        lots   = ai.get("lots", 1)
+        cap    = ai.get("capital_idr", lots * 100 * price)
+        conf   = ai.get("confidence", 0)
+        hold   = ai.get("hold_duration", "intraday")
+        reason = ai.get("reasoning", "")
+        ai_block = [
+            "",
+            f"🤖 <b>AI Verdict: {ai['action']}</b> ({conf}% confidence)",
+            f"🚀 Entry:   <b>{entry:,.0f}</b>",
+            f"✅ Target:  <b>{target:,.0f}</b>  (+{t_pct:.1f}%)",
+            f"🛑 SL:      <b>{sl:,.0f}</b>  (-{sl_pct:.1f}%)",
+            f"⚖️ R/R:     1:{rr}",
+            f"💼 Lots:    {lots} (~Rp{cap/1_000_000:.1f}M)",
+            f"⏱ Hold:    {hold}",
+            f"💬 {reason}",
+            f"⚠️ T+2 settlement — capital locked 2 days after sell",
+        ]
+    else:
+        ai_action = ai.get("action", "WAIT") if ai else "—"
+        ai_block = [
+            "",
+            f"🤖 <b>AI Verdict: {ai_action}</b>",
+            f"🚀 Entry:   <b>{price:,.0f}</b>",
+            f"✅ Target:  <b>{round(price * (1 + target_pct / 100)):,.0f}</b>  (+{target_pct:.1f}%)",
+            f"🛑 SL:      <b>{round(price * (1 - sl_pct / 100)):,.0f}</b>  (-{sl_pct:.1f}%)",
+            f"⚖️ R/R:     1:{rr}",
+            f"⚠️ T+2 settlement — capital locked 2 days after sell",
+        ]
+
     lines = [
         f"📡 <b>SIGNAL — {ticker}.JK</b>",
         "━━━━━━━━━━━━━━━━━━━━",
@@ -97,15 +134,29 @@ def format_signal(symbol: str, snapshot: dict) -> str:
         f"Foreign flow: <b>{f_score}/20</b>"
         + (f"  Net buy {flow_days}d in a row" if flow_days and flow_days > 0 else ""),
         f"News:         <b>{n_score}/20</b>  {SENTIMENT_EMOJI.get(sentiment, '')} {headline[:60] if headline else 'No major news'}",
-        "",
-        f"{emoji} <b>{verdict}</b>",
-        f"🚀 Entry:   <b>{price:,.0f}</b>",
-        f"✅ Target:  <b>{target:,.0f}</b>  (+{target_pct:.1f}%)",
-        f"🛑 SL:      <b>{sl:,.0f}</b>  (-{sl_pct:.1f}%)",
-        f"⚖️ R/R:     1:{rr}",
-        f"⚠️ T+2 settlement — capital locked 2 days after sell",
-    ]
+    ] + ai_block
     return "\n".join(lines)
+
+
+def format_whale_alert(symbol: str, vol_ratio: float, score: int, auto_added: bool) -> str:
+    ticker = symbol.replace(".JK", "")
+    action = "Added to watchlist" if auto_added else "Not added (below score threshold)"
+    return (
+        f"🐋 <b>WHALE DETECTED — {ticker}.JK</b>\n"
+        f"Volume surge: <b>{vol_ratio:.1f}x</b> average\n"
+        f"Tech score: {score}/35\n"
+        f"{action}"
+    )
+
+
+def format_watchlist_change(symbol: str, action: str, watchlist: list[str]) -> str:
+    ticker = symbol.replace(".JK", "")
+    verb   = "Added" if action == "add" else "Removed"
+    stocks = ", ".join(s.replace(".JK", "") for s in watchlist)
+    return (
+        f"✅ <b>{verb}: {ticker}.JK</b>\n"
+        f"Watchlist ({len(watchlist)}): {stocks}"
+    )
 
 
 def format_presession_briefing(
