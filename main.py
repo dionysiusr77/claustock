@@ -36,7 +36,7 @@ def scan_stocks():
     for symbol in config.STOCKS:
         try:
             # 1. Fetch 5-min candles
-            df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="1d")
+            df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="5d")
             if df is None:
                 logger.warning(f"{symbol}: no candle data, skipping")
                 continue
