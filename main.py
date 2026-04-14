@@ -16,6 +16,7 @@ from forecaster import forecast_5d, warmup_models
 from news_fetcher import score_news_sentiment
 from scorer import score_stock, should_signal
 from ai_agent import get_ai_verdict
+from analyzer import analyze_stock
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -338,6 +339,17 @@ def cmd_remove(args):
         tg.send_message(f"{symbol}.JK is not in the watchlist.")
 
 
+def cmd_analyze(args):
+    if not args:
+        tg.send_message("Usage: /analyze BBCA")
+        return
+    symbol = args[0].upper()
+    tg.send_message(f"🔍 Memulai analisis mendalam untuk <b>{symbol}.JK</b>...\n(~30–60 detik)")
+    logger.info(f"/analyze {symbol} triggered")
+    parts = analyze_stock(symbol)
+    tg.send_long_message(parts)
+
+
 def cmd_help(_args):
     tg.send_message(
         "🤖 <b>IDX Bot Commands</b>\n\n"
@@ -349,6 +361,7 @@ def cmd_help(_args):
         "/news          — latest news headlines\n"
         "/add BBCA      — add stock to watchlist\n"
         "/remove BBCA   — remove stock from watchlist\n"
+        "/analyze BBCA  — full fundamental + technical report\n"
         "/help          — this message"
     )
 
@@ -387,6 +400,7 @@ def main():
         "/news":     cmd_news,
         "/add":      cmd_add,
         "/remove":   cmd_remove,
+        "/analyze":  cmd_analyze,
         "/help":     cmd_help,
     })
     poller.start()

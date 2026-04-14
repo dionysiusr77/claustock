@@ -34,6 +34,13 @@ SENTIMENT_EMOJI = {"POSITIVE": "✅", "NEUTRAL": "➖", "NEGATIVE": "⚠️"}
 
 # ── Core send ─────────────────────────────────────────────────────────────────
 
+def send_long_message(parts: list[str], parse_mode: str = "HTML") -> None:
+    """Send a multi-part message (e.g. /analyze report split into chunks)."""
+    for i, part in enumerate(parts, 1):
+        prefix = f"<i>({i}/{len(parts)})</i>\n" if len(parts) > 1 else ""
+        send_message(prefix + part, parse_mode=parse_mode)
+
+
 def send_message(text: str, parse_mode: str = "HTML") -> bool:
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured — skipping send")
