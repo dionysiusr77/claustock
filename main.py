@@ -18,6 +18,10 @@ from scorer import score_stock, should_signal
 from ai_agent import get_ai_verdict
 from analyzer import analyze_stock
 from risk_manager import check_risk_gates, calc_lot_size, record_entry, get_pnl_summary
+from scalper import (
+    scalp_scan, update_scalp_positions, close_scalp_positions,
+    get_scalp_summary, manual_add_scalp, format_scalp_watchlist,
+)
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -246,6 +250,13 @@ def _send_briefing(session: int):
 
 def eod_summary():
     logger.info("Running end-of-day summary")
+    # Close all scalp positions at market close
+    close_scalp_positions()
+    # Send scalping EOD report
+    scalp_summary = get_scalp_summary()
+    if scalp_summary["total"] > 0:
+        tg.send_message(format_scalp_watchlist(scalp_summary))
+    # Send main EOD report
     signals = db.get_today_signals()
     msg = tg.format_eod_summary(_latest_scores, signals)
     tg.send_message(msg)
@@ -347,6 +358,30 @@ def cmd_pnl(_args):
     tg.send_message(tg.format_pnl(pnl))
 
 
+def cmd_scalps(_args):
+    summary = get_scalp_summary()
+    tg.send_message(format_scalp_watchlist(summary))
+
+
+def cmd_scalpadd(args):
+    if not args:
+        tg.send_message("Usage: /scalpadd BBCA")
+        return
+    symbol = args[0].upper()
+    pos = manual_add_scalp(symbol)
+    if pos:
+        ticker = symbol if symbol.endswith(".JK") else symbol + ".JK"
+        tg.send_message(
+            f"⚡ <b>{ticker.replace('.JK','.JK')} added to scalping watchlist</b>\n"
+            f"Entry price: <b>{pos['entry_price']:,.0f}</b>\n"
+            f"Open price:  {pos['open_price']:,.0f}\n"
+            f"Drop from open: {pos['drop_pct']:+.1f}%\n"
+            f"Monitoring until 15:49 WIB — P&L at EOD."
+        )
+    else:
+        tg.send_message(f"❌ Could not fetch data for {symbol}.")
+
+
 def cmd_analyze(args):
     if not args:
         tg.send_message("Usage: /analyze BBCA")
@@ -370,6 +405,8 @@ def cmd_help(_args):
         "/add BBCA      — add stock to watchlist\n"
         "/remove BBCA   — remove stock from watchlist\n"
         "/pnl           — today's signal P&L\n"
+        "/scalps        — scalping watchlist + live P&L\n"
+        "/scalpadd BBCA — manually add to scalping watchlist\n"
         "/analyze BBCA  — full fundamental + technical report\n"
         "/help          — this message"
     )
@@ -410,6 +447,8 @@ def main():
         "/add":      cmd_add,
         "/remove":   cmd_remove,
         "/pnl":      cmd_pnl,
+        "/scalps":   cmd_scalps,
+        "/scalpadd": cmd_scalpadd,
         "/analyze":  cmd_analyze,
         "/help":     cmd_help,
     })
@@ -418,11 +457,13 @@ def main():
     # Immediate scan
     scan_stocks()
 
-    # Whale scan runs alongside normal scan every 5 min
+    # Combined scan: watchlist + whale + scalper
     def scan_and_whale():
         scan_stocks()
         if is_market_open():
             whale_scan()
+            scalp_scan(notify_fn=tg.send_message)
+            update_scalp_positions(notify_fn=tg.send_message)
 
     logger.info(f"Scheduler started — scan every {config.SCAN_INTERVAL_SEC}s during market hours")
     scheduler = build_scheduler(
