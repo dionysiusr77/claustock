@@ -413,66 +413,90 @@ def analyze_stock(symbol: str) -> list[str]:
         client   = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         response = client.messages.create(
             model=config.CLAUDE_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
         full_text = response.content[0].text.strip()
         logger.info(f"Analysis complete for {sym} ({len(full_text)} chars)")
-        return _split_message(full_text)
+        return _split_by_section(full_text)
 
     except Exception as e:
         logger.error(f"analyze_stock({sym}) Claude call failed: {e}")
         return [f"❌ Analisis gagal: {e}"]
 
 
-def _split_message(text: str, limit: int = 3800) -> list[str]:
+def _split_by_section(text: str, hard_limit: int = 3800) -> list[str]:
     """
-    Split a long message into Telegram-safe chunks.
-    3800 char limit leaves headroom for the (N/M) prefix and HTML tags.
+    Split Claude's analysis output into one message per Bagian section.
 
-    Strategy:
-    1. Try to break at \n\n (section boundaries)
-    2. Fall back to \n (line boundaries) for oversized paragraphs
-    3. Hard-cut as last resort
+    Splitting logic:
+    1. Find lines that open a new Bagian (header markers from the prompt template)
+    2. Each Bagian becomes its own message — always complete, never mid-section
+    3. If a single section still exceeds hard_limit, split it by line (last resort)
+
+    Expected section markers (as instructed in the prompt):
+      <b>📊 ANALISIS ...     ← report header  (msg 1)
+      <b>📌 Bagian 1 ...     ← profil emiten  (msg 2)
+      <b>💰 Bagian 2 ...     ← fundamental    (msg 3)
+      <b>📈 Bagian 3 ...     ← teknikal       (msg 4)
+      <b>🌊 Bagian 4 ...     ← sentimen       (msg 5)
+      <b>🎯 Bagian 5 ...     ← rekomendasi    (msg 6)
     """
+    import re
+
+    # Markers that indicate the start of a new section
+    SECTION_RE = re.compile(
+        r"^(<b>)(📊|📌|💰|📈|🌊|🎯)",
+        re.MULTILINE,
+    )
+
+    # Find all split positions
+    boundaries = [m.start() for m in SECTION_RE.finditer(text)]
+
+    if not boundaries:
+        # Claude didn't use the expected headers — fall back to size-based split
+        return _split_by_size(text, hard_limit)
+
+    # Always include everything before the first boundary in the first section
+    sections = []
+    for i, start in enumerate(boundaries):
+        end = boundaries[i + 1] if i + 1 < len(boundaries) else len(text)
+        sections.append(text[start:end].strip())
+
+    # If there's content before the first boundary (unlikely but safe)
+    preamble = text[:boundaries[0]].strip()
+    if preamble:
+        sections.insert(0, preamble)
+
+    # Safety: hard-cut any section that's still too long
+    result = []
+    for section in sections:
+        if len(section) <= hard_limit:
+            result.append(section)
+        else:
+            result.extend(_split_by_size(section, hard_limit))
+
+    return result if result else [text[:hard_limit]]
+
+
+def _split_by_size(text: str, limit: int = 3800) -> list[str]:
+    """Fallback: split by line boundaries, never exceeding limit."""
     if len(text) <= limit:
         return [text]
 
-    parts   = []
-    current = ""
-
-    for para in text.split("\n\n"):
-        block = para + "\n\n"
-
-        # If this single block alone exceeds limit, split it further by line
-        if len(block) > limit:
-            # Flush current first
-            if current.strip():
-                parts.append(current.rstrip())
-                current = ""
-            # Split oversized block by single newline
-            for line in para.split("\n"):
-                line_block = line + "\n"
-                if len(current) + len(line_block) > limit:
-                    if current.strip():
-                        parts.append(current.rstrip())
-                    current = line_block
-                else:
-                    current += line_block
-            current += "\n"  # restore paragraph gap
-            continue
-
+    parts, current = [], ""
+    for line in text.split("\n"):
+        block = line + "\n"
         if len(current) + len(block) > limit:
             if current.strip():
                 parts.append(current.rstrip())
             current = block
         else:
             current += block
-
     if current.strip():
         parts.append(current.rstrip())
 
-    # Safety: hard-cut any part still over limit (shouldn't happen)
+    # Hard-cut anything still over limit
     result = []
     for part in parts:
         if len(part) <= limit:
@@ -480,5 +504,4 @@ def _split_message(text: str, limit: int = 3800) -> list[str]:
         else:
             for i in range(0, len(part), limit):
                 result.append(part[i:i + limit])
-
-    return result if result else [text[:limit]]
+    return result or [text[:limit]]
