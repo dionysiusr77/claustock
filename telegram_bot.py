@@ -35,10 +35,28 @@ SENTIMENT_EMOJI = {"POSITIVE": "✅", "NEUTRAL": "➖", "NEGATIVE": "⚠️"}
 # ── Core send ─────────────────────────────────────────────────────────────────
 
 def send_long_message(parts: list[str], parse_mode: str = "HTML") -> None:
-    """Send a multi-part message (e.g. /analyze report split into chunks)."""
+    """
+    Send a multi-part message with retry + delay between parts.
+    Telegram rate-limits rapid sequential messages — 1.5s gap prevents drops.
+    """
+    import time
     for i, part in enumerate(parts, 1):
         prefix = f"<i>({i}/{len(parts)})</i>\n" if len(parts) > 1 else ""
-        send_message(prefix + part, parse_mode=parse_mode)
+        text   = prefix + part
+
+        # Retry up to 3 times per part
+        for attempt in range(1, 4):
+            ok = send_message(text, parse_mode=parse_mode)
+            if ok:
+                break
+            logger.warning(f"send_long_message part {i}/{len(parts)} attempt {attempt} failed, retrying...")
+            time.sleep(2 * attempt)
+        else:
+            logger.error(f"send_long_message: part {i}/{len(parts)} failed after 3 attempts")
+
+        # Delay between parts to avoid Telegram rate limit (30 msg/sec per chat)
+        if i < len(parts):
+            time.sleep(1.5)
 
 
 def send_message(text: str, parse_mode: str = "HTML") -> bool:

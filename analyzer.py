@@ -425,20 +425,45 @@ def analyze_stock(symbol: str) -> list[str]:
         return [f"❌ Analisis gagal: {e}"]
 
 
-def _split_message(text: str, limit: int = 4000) -> list[str]:
+def _split_message(text: str, limit: int = 3800) -> list[str]:
     """
-    Split a long message into Telegram-safe chunks at section boundaries.
-    Tries to break at double-newlines (section breaks) rather than mid-sentence.
+    Split a long message into Telegram-safe chunks.
+    3800 char limit leaves headroom for the (N/M) prefix and HTML tags.
+
+    Strategy:
+    1. Try to break at \n\n (section boundaries)
+    2. Fall back to \n (line boundaries) for oversized paragraphs
+    3. Hard-cut as last resort
     """
     if len(text) <= limit:
         return [text]
 
-    parts  = []
+    parts   = []
     current = ""
+
     for para in text.split("\n\n"):
         block = para + "\n\n"
+
+        # If this single block alone exceeds limit, split it further by line
+        if len(block) > limit:
+            # Flush current first
+            if current.strip():
+                parts.append(current.rstrip())
+                current = ""
+            # Split oversized block by single newline
+            for line in para.split("\n"):
+                line_block = line + "\n"
+                if len(current) + len(line_block) > limit:
+                    if current.strip():
+                        parts.append(current.rstrip())
+                    current = line_block
+                else:
+                    current += line_block
+            current += "\n"  # restore paragraph gap
+            continue
+
         if len(current) + len(block) > limit:
-            if current:
+            if current.strip():
                 parts.append(current.rstrip())
             current = block
         else:
@@ -447,4 +472,13 @@ def _split_message(text: str, limit: int = 4000) -> list[str]:
     if current.strip():
         parts.append(current.rstrip())
 
-    return parts if parts else [text[:limit]]
+    # Safety: hard-cut any part still over limit (shouldn't happen)
+    result = []
+    for part in parts:
+        if len(part) <= limit:
+            result.append(part)
+        else:
+            for i in range(0, len(part), limit):
+                result.append(part[i:i + limit])
+
+    return result if result else [text[:limit]]
