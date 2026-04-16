@@ -37,6 +37,50 @@ WHALE_VOL_THRESHOLD   = 3.0   # volume ratio must be >= this to qualify
 WHALE_MIN_SCORE       = 55    # minimum tech score (0-35 scale) to auto-add
 WHALE_AUTO_ADD        = True  # if True, auto-add to watchlist; else just notify
 
+# ── Scalper settings ──────────────────────────
+SCALP_MAX_RSI            = 50     # RSI must be BELOW this to qualify as scalp
+SCALP_MIN_DROP_FROM_OPEN = 0.5    # minimum % drop from open price to qualify
+SCALP_MAX_DROP_FROM_OPEN = 6.0    # maximum % drop — beyond this is a crash
+SCALP_MIN_SCORE          = 55     # minimum scalp score (0–100)
+
+# ── Momentum settings ─────────────────────────
+MOMENTUM_MIN_RSI         = 50     # RSI must be ABOVE this for momentum
+MOMENTUM_MIN_NEWS_SCORE  = 12     # minimum news score (0–20) to qualify
+MOMENTUM_MIN_SCORE       = 60     # minimum total score (0–100) for momentum
+MOMENTUM_HOLD_DAYS       = 3      # hold for up to 3 trading days
+MOMENTUM_TARGET_PCT      = 3.0    # take-profit target (%)
+MOMENTUM_STOP_LOSS_PCT   = -1.5   # stop-loss level (%)
+
+# Sector correlation guard — max same-sector positions in scalp watchlist
+MAX_SAME_SECTOR = 2
+
+# ── Sector mapping ────────────────────────────
+SECTORS: dict[str, str] = {
+    # Banking
+    "BBCA.JK": "BANKING", "BBRI.JK": "BANKING", "BMRI.JK": "BANKING",
+    "BNGA.JK": "BANKING", "BBNI.JK": "BANKING",
+    # Telco
+    "TLKM.JK": "TELCO",   "EXCL.JK": "TELCO",   "ISAT.JK": "TELCO",
+    "TBIG.JK": "TELCO",   "TOWR.JK": "TELCO",
+    # Consumer
+    "UNVR.JK": "CONSUMER","ICBP.JK": "CONSUMER", "INDF.JK": "CONSUMER",
+    "AMRT.JK": "CONSUMER","HMSP.JK": "CONSUMER", "SIDO.JK": "CONSUMER",
+    "KLBF.JK": "CONSUMER","CPIN.JK": "CONSUMER",
+    # Energy / Mining
+    "ADRO.JK": "ENERGY",  "PTBA.JK": "ENERGY",   "PGAS.JK": "ENERGY",
+    "MEDC.JK": "ENERGY",  "MDKA.JK": "ENERGY",   "INCO.JK": "ENERGY",
+    "ANTM.JK": "ENERGY",
+    # Industrial / Automotive
+    "ASII.JK": "INDUSTRIAL","SMGR.JK": "INDUSTRIAL","INKP.JK": "INDUSTRIAL",
+    "TPIA.JK": "INDUSTRIAL",
+    # Tech / Media
+    "GOTO.JK": "TECH",    "EMTK.JK": "TECH",     "MNCN.JK": "TECH",
+    # Healthcare
+    "MIKA.JK": "HEALTHCARE",
+    # Energy (renewables/new)
+    "BREN.JK": "ENERGY",
+}
+
 # ── Timeframes ────────────────────────────────
 CANDLE_INTERVAL = "5m"    # 5-minute candles during market
 CANDLE_LIMIT    = 60      # 60 candles = 5 hours history

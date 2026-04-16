@@ -11,6 +11,41 @@ logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
+# ── Persistent HTTP session for all IDX API calls ─────────────────────────────
+# Establishes a browser-like cookie context to avoid 403s on Railway (GCP IPs).
+_IDX_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+    "Referer":         "https://www.idx.co.id/",
+    "Origin":          "https://www.idx.co.id",
+}
+
+SESSION = requests.Session()
+SESSION.headers.update(_IDX_HEADERS)
+
+def _ensure_idx_cookie():
+    """Establish a session cookie with idx.co.id so API calls are not rejected."""
+    try:
+        SESSION.get("https://www.idx.co.id/", timeout=10)
+    except Exception as e:
+        logger.warning(f"_ensure_idx_cookie: {e}")
+
+# Establish cookie at import time (non-fatal if it fails)
+try:
+    _ensure_idx_cookie()
+except Exception:
+    pass
+
+# ── In-memory cache for consecutive-days calculation ──────────────────────────
+# { stock_code: (result: int, expires: datetime) }
+_flow_cache: dict[str, tuple[int, datetime]] = {}
+_FLOW_CACHE_TTL_HOURS = 1
+
 
 def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.DataFrame | None:
     """
@@ -89,11 +124,7 @@ def fetch_foreign_flow(symbol: str) -> dict | None:
     try:
         url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetBrokerSummary"
         params = {"stockCode": stock_code, "tradingDate": today}
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.idx.co.id/",
-        }
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp = SESSION.get(url, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -154,20 +185,23 @@ def _calc_consecutive_days(stock_code: str, lookback: int = 5) -> int:
     """
     Check last `lookback` trading days and return how many consecutive
     days foreigners have been net buyers (positive) or net sellers (negative).
+    Results are cached for 1 hour to avoid 5 HTTP calls per stock per scan.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://www.idx.co.id/",
-    }
+    # Check cache
+    cached = _flow_cache.get(stock_code)
+    if cached is not None:
+        result, expires = cached
+        if datetime.now() < expires:
+            return result
+
     net_vals = []
     for i in range(1, lookback + 1):
         date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
         try:
             url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetBrokerSummary"
-            resp = requests.get(
+            resp = SESSION.get(
                 url,
                 params={"stockCode": stock_code, "tradingDate": date},
-                headers=headers,
                 timeout=8,
             )
             data = resp.json()
@@ -176,16 +210,20 @@ def _calc_consecutive_days(stock_code: str, lookback: int = 5) -> int:
             break
 
     if not net_vals:
-        return 0
+        result = 0
+    else:
+        direction = 1 if net_vals[0] >= 0 else -1
+        count = 0
+        for val in net_vals:
+            if (val >= 0 and direction == 1) or (val < 0 and direction == -1):
+                count += 1
+            else:
+                break
+        result = count * direction
 
-    direction = 1 if net_vals[0] >= 0 else -1
-    count = 0
-    for val in net_vals:
-        if (val >= 0 and direction == 1) or (val < 0 and direction == -1):
-            count += 1
-        else:
-            break
-    return count * direction
+    # Store in cache with 1-hour TTL
+    _flow_cache[stock_code] = (result, datetime.now() + timedelta(hours=_FLOW_CACHE_TTL_HOURS))
+    return result
 
 
 def fetch_jci_summary() -> dict | None:
@@ -205,8 +243,7 @@ def fetch_jci_summary() -> dict | None:
         foreign_net = None
         try:
             url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetForeignFlow"
-            headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.idx.co.id/"}
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = SESSION.get(url, timeout=10)
             fdata = resp.json()
             # IDX returns list; take the most recent entry
             if isinstance(fdata, list) and fdata:

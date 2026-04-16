@@ -12,14 +12,37 @@ logger = logging.getLogger(__name__)
 
 WIB = pytz.timezone(config.MARKET_TZ)
 
+# IDX public holidays 2026 (YYYY-MM-DD)
+IDX_HOLIDAYS_2026 = {
+    "2026-01-01",  # New Year's Day
+    "2026-03-20",  # Isra Mi'raj
+    "2026-03-26",  # Good Friday
+    "2026-03-27",  # Day off
+    "2026-04-02",  # Eid ul-Fitr
+    "2026-05-01",  # Labour Day
+    "2026-05-14",  # Ascension Day
+    "2026-05-25",  # Waisak
+    "2026-06-01",  # Pancasila Day
+    "2026-08-17",  # Independence Day
+    "2026-09-11",  # Eid ul-Adha
+    "2026-10-01",  # Islamic New Year
+    "2026-12-25",  # Christmas
+}
+
 
 def is_trading_day(dt: datetime | None = None) -> bool:
     """
-    Returns True if the given datetime (or now) is a weekday (Mon–Fri).
-    TODO: Add IDX public holiday calendar check.
+    Returns True if the given datetime (or now) is a weekday (Mon–Fri)
+    and not an IDX public holiday.
     """
     now = dt or datetime.now(WIB)
-    return now.weekday() < 5  # 0=Mon … 4=Fri
+    if now.weekday() >= 5:  # Saturday or Sunday
+        return False
+    date_str = now.strftime("%Y-%m-%d")
+    if date_str in IDX_HOLIDAYS_2026:
+        logger.debug(f"is_trading_day: {date_str} is an IDX holiday")
+        return False
+    return True
 
 
 def is_market_open(dt: datetime | None = None) -> bool:

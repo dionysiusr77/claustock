@@ -73,7 +73,7 @@ def score_stock(
 
 def _verdict(score: int) -> str:
     if score >= 80:
-        return "STRONG BUY"
+        return "STRONG_BUY"
     elif score >= 60:
         return "BUY"
     elif score >= 40:

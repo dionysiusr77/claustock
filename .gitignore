@@ -1,0 +1,7 @@
+.gitignore
+.env
+.env.example
+serviceAcc.json
+__pycache__/
+*.pyc
+*.pyo

@@ -23,7 +23,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 
 # Emoji map
 VERDICT_EMOJI = {
-    "STRONG BUY": "🚀",
+    "STRONG_BUY": "🚀",
     "BUY":        "📈",
     "WATCH":      "👀",
     "SKIP":       "⛔",
