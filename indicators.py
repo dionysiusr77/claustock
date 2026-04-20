@@ -77,9 +77,16 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         close  = df["close"]
         volume = df["volume"]
 
-        # RSI(14)
+        # RSI(14) — current and previous bar
         rsi_series = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-        rsi = round(float(rsi_series.iloc[-1]), 2)
+        rsi      = round(float(rsi_series.iloc[-1]), 2)
+        rsi_prev = round(float(rsi_series.iloc[-2]), 2) if len(rsi_series) >= 2 else rsi
+
+        # MACD(12, 26, 9)
+        macd_obj       = ta.trend.MACD(close=close, window_slow=26, window_fast=12, window_sign=9)
+        macd_hist      = macd_obj.macd_diff()   # histogram = MACD line − signal line
+        macd_histogram      = round(float(macd_hist.iloc[-1]), 4)
+        macd_histogram_prev = round(float(macd_hist.iloc[-2]), 4) if len(macd_hist) >= 2 else macd_histogram
 
         # MA(7) and MA(30)
         ma7  = round(float(close.rolling(7).mean().iloc[-1]), 2)
@@ -92,64 +99,90 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         else:
             ma_trend = "FLAT"
 
-        # Volume ratio: use last *completed* candle (iloc[-2]) — iloc[-1] is the
-        # current in-progress bar and often reports 0 volume from yfinance
-        completed_vol = volume.iloc[-2] if len(volume) >= 2 else volume.iloc[-1]
-        avg_vol = volume.iloc[:-1].rolling(20).mean().iloc[-1]  # avg excludes live bar
-        volume_ratio = round(float(completed_vol / avg_vol), 2) if avg_vol and avg_vol > 0 else 1.0
+        # Volume: use completed candles (iloc[-2] = last closed bar, iloc[-3] = bar before that)
+        # iloc[-1] is the live in-progress bar — often reports 0 from yfinance
+        vol_completed = float(volume.iloc[-2]) if len(volume) >= 2 else float(volume.iloc[-1])
+        vol_prev      = float(volume.iloc[-3]) if len(volume) >= 3 else vol_completed
+        avg_vol       = float(volume.iloc[:-1].rolling(20).mean().iloc[-1]) if len(volume) >= 20 else vol_completed
+        volume_ratio  = round(vol_completed / avg_vol, 2) if avg_vol > 0 else 1.0
+        # True if today's completed bar beat both yesterday AND 20-bar average
+        volume_surging = vol_completed > vol_prev and vol_completed > avg_vol
 
         # Candle pattern — use completed candles only (drop live bar)
         candle_pattern = _detect_candle_pattern(df.iloc[:-1])
 
         price = round(float(close.iloc[-1]), 2)
 
+        # Derived momentum signals
+        rsi_rising    = rsi > rsi_prev                          # RSI turning up
+        macd_turning  = macd_histogram > macd_histogram_prev    # histogram expanding upward
+        macd_crossing = macd_histogram >= 0 > macd_histogram_prev  # just crossed zero
+
         # ── Scoring (0–35 pts) ────────────────────────────────────────────
         score   = 0
         reasons = []
 
-        # RSI scoring (0–15 pts)
+        # RSI scoring (0–12 pts)
         if rsi < 30:
-            score += 15
+            score += 12
             reasons.append(f"RSI {rsi:.1f} — oversold (strong buy)")
         elif rsi < 40:
-            score += 12
+            score += 10
             reasons.append(f"RSI {rsi:.1f} — near oversold")
         elif rsi < 50:
-            score += 8
+            score += 6
             reasons.append(f"RSI {rsi:.1f} — below midline, mild bullish")
         elif rsi < 60:
-            score += 5
+            score += 3
             reasons.append(f"RSI {rsi:.1f} — neutral")
         elif rsi < 70:
-            score += 3
+            score += 1
             reasons.append(f"RSI {rsi:.1f} — approaching overbought")
         else:
             score += 0
             reasons.append(f"RSI {rsi:.1f} — overbought, avoid")
 
-        # MA trend scoring (0–10 pts)
+        # RSI direction bonus (0–5 pts)
+        if rsi_rising and rsi < 50:
+            score += 5
+            reasons.append(f"RSI rising ({rsi_prev:.1f} → {rsi:.1f}) — momentum recovering")
+
+        # MACD scoring (0–8 pts)
+        if macd_crossing:
+            score += 8
+            reasons.append(f"MACD crossed zero — bullish signal")
+        elif macd_turning and macd_histogram < 0:
+            score += 5
+            reasons.append(f"MACD histogram turning up ({macd_histogram_prev:.4f} → {macd_histogram:.4f})")
+        elif macd_turning and macd_histogram >= 0:
+            score += 3
+            reasons.append(f"MACD histogram expanding positive")
+
+        # MA trend scoring (0–5 pts)
         if ma_trend == "UP":
-            score += 10
+            score += 5
             reasons.append(f"MA uptrend (MA7 {ma7} > MA30 {ma30})")
         elif ma_trend == "FLAT":
-            score += 4
+            score += 2
             reasons.append(f"MA flat (MA7 {ma7} ≈ MA30 {ma30})")
         else:
             score += 0
             reasons.append(f"MA downtrend (MA7 {ma7} < MA30 {ma30})")
 
-        # Volume ratio scoring (0–5 pts)
-        if volume_ratio >= 2.0:
+        # Volume scoring (0–5 pts)
+        if volume_surging:
             score += 5
-            reasons.append(f"Volume {volume_ratio:.1f}x avg — strong surge")
+            reasons.append(f"Volume surging ({volume_ratio:.1f}x avg, > yesterday)")
+        elif volume_ratio >= 2.0:
+            score += 4
+            reasons.append(f"Volume {volume_ratio:.1f}x avg — strong")
         elif volume_ratio >= 1.5:
-            score += 3
+            score += 2
             reasons.append(f"Volume {volume_ratio:.1f}x avg — above average")
         elif volume_ratio >= 1.0:
             score += 1
             reasons.append(f"Volume {volume_ratio:.1f}x avg — normal")
         else:
-            score += 0
             reasons.append(f"Volume {volume_ratio:.1f}x avg — low")
 
         # Candle pattern scoring (0–5 pts)
@@ -157,24 +190,31 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
             "bullish_engulfing": 5,
             "hammer":            4,
             "shooting_star":     0,
-            "neutral":           2,
+            "neutral":           1,
         }
-        score += pattern_scores.get(candle_pattern, 2)
+        score += pattern_scores.get(candle_pattern, 1)
         if candle_pattern != "neutral":
             reasons.append(f"Candle: {candle_pattern.replace('_', ' ')}")
 
         score = min(score, 35)
 
         return {
-            "rsi":            rsi,
-            "ma7":            ma7,
-            "ma30":           ma30,
-            "ma_trend":       ma_trend,
-            "price":          price,
-            "volume_ratio":   volume_ratio,
-            "candle_pattern": candle_pattern,
-            "score":          score,
-            "reasons":        reasons,
+            "rsi":                  rsi,
+            "rsi_prev":             rsi_prev,
+            "rsi_rising":           rsi_rising,
+            "macd_histogram":       macd_histogram,
+            "macd_histogram_prev":  macd_histogram_prev,
+            "macd_turning":         macd_turning,
+            "macd_crossing":        macd_crossing,
+            "ma7":                  ma7,
+            "ma30":                 ma30,
+            "ma_trend":             ma_trend,
+            "price":                price,
+            "volume_ratio":         volume_ratio,
+            "volume_surging":       volume_surging,
+            "candle_pattern":       candle_pattern,
+            "score":                score,
+            "reasons":              reasons,
         }
 
     except Exception as e:

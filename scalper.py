@@ -61,9 +61,10 @@ def classify_signal(result: dict) -> str:
     Classify a scanner result as "SCALP", "MOMENTUM", or "SKIP".
 
     SCALP criteria (intraday mean-reversion):
-      - RSI < SCALP_MAX_RSI (default 50)
+      - RSI < 40 (hard oversold cut)
+      - RSI today > RSI yesterday (momentum recovering)
       - intraday drop from open between SCALP_MIN and SCALP_MAX %
-      - volume_ratio >= 1.5
+      - volume today > yesterday OR volume > 20-bar avg
 
     MOMENTUM criteria (multi-day trend continuation):
       - RSI >= MOMENTUM_MIN_RSI (default 50)
@@ -72,17 +73,25 @@ def classify_signal(result: dict) -> str:
 
     Anything else → SKIP.
     """
-    rsi          = result.get("rsi") or 0
-    news_score   = result.get("scores", {}).get("news", 0) if "scores" in result else result.get("news_score", 0)
-    total_score  = result.get("total_score", 0)
-    volume_ratio = result.get("volume_ratio") or 0
-    drop_pct     = result.get("drop_pct", 0)   # positive = dropped from open
+    rsi             = result.get("rsi") or 0
+    rsi_rising      = result.get("rsi_rising", False)
+    macd_turning    = result.get("macd_turning", False)
+    macd_crossing   = result.get("macd_crossing", False)
+    volume_ratio    = result.get("volume_ratio") or 0
+    volume_surging  = result.get("volume_surging", False)
+    drop_pct        = result.get("drop_pct", 0)   # positive = dropped from open
+    news_score      = result.get("scores", {}).get("news", 0) if "scores" in result else result.get("news_score", 0)
+    total_score     = result.get("total_score", 0)
 
-    # Scalp: oversold + intraday drop + active volume
+    # Scalp: RSI < 40 hard cut + RSI turning up + drop from open + volume active
+    volume_ok = volume_surging or volume_ratio >= MIN_VOL_RATIO
+    macd_ok   = macd_turning or macd_crossing
     if (
-        rsi < config.SCALP_MAX_RSI
+        rsi < 40
+        and rsi_rising
         and MIN_DROP_PCT <= drop_pct <= MAX_DROP_PCT
-        and volume_ratio >= MIN_VOL_RATIO
+        and volume_ok
+        and macd_ok
     ):
         return "SCALP"
 
@@ -102,50 +111,62 @@ def classify_signal(result: dict) -> str:
 def _score_scalp_candidate(
     drop_pct: float,
     rsi: float,
+    rsi_rising: bool,
     vol_ratio: float,
+    volume_surging: bool,
     ma_trend: str,
+    macd_turning: bool,
+    macd_crossing: bool,
 ) -> int:
     """
     Score a bounce candidate 0–100.
-    Sweet spot: drop 1.5–3%, RSI 30–42, volume 2x+, MA not DOWN.
+    Sweet spot: drop 1.5–3%, RSI <35 and rising, MACD turning, volume surging.
     """
     score = 0
 
-    # Drop score (0–35): sweet spot is -1.5% to -3%
+    # Drop score (0–30): sweet spot is 1.5–3%
     if 1.5 <= drop_pct < 2.0:
-        score += 25
-    elif 2.0 <= drop_pct < 3.0:
-        score += 35   # sweet spot
-    elif 3.0 <= drop_pct < 4.5:
         score += 20
+    elif 2.0 <= drop_pct < 3.0:
+        score += 30   # sweet spot
+    elif 3.0 <= drop_pct < 4.5:
+        score += 18
     elif 4.5 <= drop_pct <= MAX_DROP_PCT:
+        score += 8
+
+    # RSI score (0–20): hard-cut already applied in classify_signal; reward lower RSI
+    if rsi < 30:
+        score += 20
+    elif rsi < 35:
+        score += 15
+    elif rsi < 40:
         score += 10
 
-    # RSI score (0–30): lower = more oversold = better bounce potential
-    if rsi < 30:
-        score += 30
-    elif rsi < 35:
-        score += 25
-    elif rsi < 40:
-        score += 20
-    elif rsi < 45:
-        score += 12
-    elif rsi <= MAX_RSI:
-        score += 5
+    # RSI direction bonus (0–10): turning up = bounce starting
+    if rsi_rising:
+        score += 10
 
-    # Volume score (0–25): high volume = real selling, real bounce
-    if vol_ratio >= 3.0:
-        score += 25
+    # MACD score (0–20): crossing zero is best signal
+    if macd_crossing:
+        score += 20
+    elif macd_turning:
+        score += 12
+
+    # Volume score (0–15): surging volume = conviction
+    if volume_surging:
+        score += 15
+    elif vol_ratio >= 3.0:
+        score += 12
     elif vol_ratio >= 2.0:
-        score += 20
+        score += 8
     elif vol_ratio >= 1.5:
-        score += 12
+        score += 4
 
-    # MA trend (0–10): avoid death spirals
+    # MA trend (0–5): avoid death spirals
     if ma_trend == "UP":
-        score += 10     # dropped into an uptrend = strong bounce candidate
-    elif ma_trend == "FLAT":
         score += 5
+    elif ma_trend == "FLAT":
+        score += 2
 
     return min(score, 100)
 
@@ -251,18 +272,29 @@ def scalp_scan(notify_fn=None) -> list[dict]:
 
             # Build a result dict for classify_signal
             result_ctx = {
-                "rsi":          tech["rsi"],
-                "volume_ratio": tech["volume_ratio"],
-                "drop_pct":     drop_pct,
-                "total_score":  tech["score"],   # tech-only at scan time
-                "news_score":   0,               # not available at scan time
+                "rsi":             tech["rsi"],
+                "rsi_rising":      tech["rsi_rising"],
+                "macd_turning":    tech["macd_turning"],
+                "macd_crossing":   tech["macd_crossing"],
+                "volume_ratio":    tech["volume_ratio"],
+                "volume_surging":  tech["volume_surging"],
+                "drop_pct":        drop_pct,
+                "total_score":     tech["score"],
+                "news_score":      0,
             }
 
             signal_type = classify_signal(result_ctx)
 
             if signal_type == "SCALP" and symbol not in already_scalp:
                 score = _score_scalp_candidate(
-                    drop_pct, tech["rsi"], tech["volume_ratio"], tech["ma_trend"]
+                    drop_pct       = drop_pct,
+                    rsi            = tech["rsi"],
+                    rsi_rising     = tech["rsi_rising"],
+                    vol_ratio      = tech["volume_ratio"],
+                    volume_surging = tech["volume_surging"],
+                    ma_trend       = tech["ma_trend"],
+                    macd_turning   = tech["macd_turning"],
+                    macd_crossing  = tech["macd_crossing"],
                 )
                 if score < MIN_SCORE:
                     continue
