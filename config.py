@@ -90,10 +90,10 @@ DAILY_CANDLES   = 365     # 1yr for Prophet training
 MARKET_TZ      = "Asia/Jakarta"
 SESSION1_START = (9, 0)    # 09:00
 SESSION1_END   = (12, 0)   # 12:00
-SESSION2_START = (13, 0)   # 13:00
+SESSION2_START = (13, 30)   # 13:30
 SESSION2_END   = (15, 49)  # 15:49
 BRIEFING1_TIME = (8, 45)   # Pre-session 1 briefing
-BRIEFING2_TIME = (12, 30)  # Pre-session 2 briefing
+BRIEFING2_TIME = (13, 15)  # Pre-session 2 briefing
 EOD_TIME       = (16, 0)   # End of day summary
 
 # ── Scan interval ─────────────────────────────
