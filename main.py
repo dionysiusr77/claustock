@@ -238,12 +238,14 @@ def presession2():
 
 
 def _send_briefing(session: int, chat_id=None):
-    jci = fetch_jci_summary()
+    jci           = fetch_jci_summary()
+    scalp_summary = get_scalp_summary()
     msg = tg.format_presession_briefing(
         session=session,
         date_str=datetime.now(WIB).strftime("%a %d %b %Y"),
         jci=jci,
         stock_scores=_latest_scores,
+        scalp_summary=scalp_summary,
     )
     tg.send_message(msg, chat_id=chat_id)
 

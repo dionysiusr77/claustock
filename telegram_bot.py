@@ -243,67 +243,138 @@ def format_presession_briefing(
     date_str: str,
     jci: dict | None,
     stock_scores: list[dict],
+    scalp_summary: dict | None = None,
 ) -> str:
     """Format the pre-session briefing message."""
-    session_label = f"SESSION {session} BRIEFING"
     now_wib = datetime.now(WIB).strftime("%a %d %b %Y")
 
     lines = [
-        f"📋 <b>{session_label} — {now_wib}</b>",
+        f"📋 <b>SESSION {session} BRIEFING — {now_wib}</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
 
-    # Market context
+    # ── Market context ────────────────────────────────────────────────────
     if jci:
-        chg = jci.get("jci_change_pct", 0)
-        chg_str = f"{chg:+.1f}%" if chg else "N/A"
+        chg     = jci.get("jci_change_pct", 0) or 0
+        chg_str = f"{chg:+.1f}%"
+        chg_e   = "🟢" if chg > 0 else ("🔴" if chg < 0 else "⚪")
+        net_idr = jci.get("total_foreign_net_idr", 0) or 0
+        net_b   = net_idr / 1_000_000_000
+        flow_e  = "🟢" if net_b > 0 else ("🔴" if net_b < 0 else "⚪")
         lines += [
-            "🌍 <b>Market Context</b>",
-            f"  JCI: {jci.get('jci_close', 'N/A')} ({chg_str})",
+            f"🌍 <b>Market</b>  JCI {jci.get('jci_close', 'N/A')} {chg_e}{chg_str}"
+            f"  |  Foreign net {flow_e}{net_b:+.2f}B IDR",
             "",
         ]
 
-    # Forecast summary
-    forecasts = [s for s in stock_scores if s.get("trend_pct") is not None]
+    # ── 5-Day Forecast — sorted best outlook first ────────────────────────
+    forecasts = sorted(
+        [s for s in stock_scores if s.get("trend_pct") is not None],
+        key=lambda x: x.get("trend_pct", 0),
+        reverse=True,
+    )
     if forecasts:
         lines.append("📈 <b>5-Day Forecast</b>")
-        for s in forecasts[:5]:
-            ticker    = s["symbol"].replace(".JK", "")
-            cur       = s.get("price", 0)
-            f5d       = s.get("forecast_5d", cur)
-            pct       = s.get("trend_pct", 0)
-            trend_e   = TREND_EMOJI.get(s.get("trend", "FLAT"), "⚪")
-            lines.append(f"  {ticker:5s}  {cur:>8,.0f} → {f5d:>8,.0f}  ({pct:+.1f}%)  {trend_e}")
+        for s in forecasts[:6]:
+            ticker  = s["symbol"].replace(".JK", "")
+            cur     = s.get("price", 0)
+            f5d     = s.get("forecast_5d", cur)
+            pct     = s.get("trend_pct", 0)
+            trend_e = TREND_EMOJI.get(s.get("trend", "FLAT"), "⚪")
+            lines.append(
+                f"  {trend_e} {ticker:5s}  {cur:>8,.0f} → {f5d:>8,.0f}  ({pct:+.1f}%)"
+            )
         lines.append("")
 
-    # Top picks
-    picks = [s for s in stock_scores if s.get("total_score", 0) >= config.IDX_MIN_SCORE]
-    picks.sort(key=lambda x: x.get("total_score", 0), reverse=True)
-
+    # ── Top picks — score >= IDX_MIN_SCORE, sorted by score ──────────────
+    picks = sorted(
+        [s for s in stock_scores if s.get("total_score", 0) >= config.IDX_MIN_SCORE],
+        key=lambda x: x.get("total_score", 0),
+        reverse=True,
+    )
     if picks:
         lines.append(f"🎯 <b>Top Picks — Session {session}</b>")
         for i, s in enumerate(picks[:3], 1):
-            ticker  = s["symbol"].replace(".JK", "")
-            price   = s.get("price", 0)
-            score   = s.get("total_score", 0)
-            verdict = s.get("verdict", "")
-            t_pct   = config.MIN_TARGET_PCT
-            target  = round(price * (1 + t_pct / 100))
-            sl      = round(price * (1 - 1.2 / 100))
+            ticker   = s["symbol"].replace(".JK", "")
+            price    = s.get("price", 0)
+            score    = s.get("total_score", 0)
+            verdict  = s.get("verdict", "")
+            sc       = s.get("scores", {})
             headline = s.get("news_headline", "")
+
+            # Use forecast as target when available, else MIN_TARGET_PCT
+            f5d = s.get("forecast_5d")
+            if f5d and f5d > price:
+                target = round(f5d)
+                t_label = "forecast"
+            else:
+                target  = round(price * (1 + config.MIN_TARGET_PCT / 100))
+                t_label = f"+{config.MIN_TARGET_PCT:.1f}%"
+            sl = round(price * 0.988)   # -1.2%
+
+            v_emoji = VERDICT_EMOJI.get(verdict, "")
             lines.append(
-                f"  {i}. <b>{ticker}</b> — Entry {price:,.0f} | Target {target:,.0f} | SL {sl:,.0f}"
+                f"  {i}. {v_emoji} <b>{ticker}</b>  {price:,.0f}"
+                f"  🎯{target:,.0f} ({t_label})  🛑{sl:,.0f}"
             )
-            lines.append(f"     Score: {score}/100 | {verdict}")
+            lines.append(
+                f"     Score: <b>{score}/100</b>"
+                f"  T:{sc.get('technical',0)} F:{sc.get('prophet',0)}"
+                f" W:{sc.get('foreign',0)} N:{sc.get('news',0)}"
+            )
             if headline:
-                lines.append(f"     📰 {headline[:70]}")
+                lines.append(f"     📰 {headline[:75]}")
         lines.append("")
 
-    # Avoid list
-    avoids = [s["symbol"].replace(".JK", "") for s in stock_scores
-              if s.get("verdict") in ("SKIP",) and s.get("total_score", 100) < 40]
+    # ── Foreign flow — top buyers + top sellers ───────────────────────────
+    with_flow = [s for s in stock_scores if s.get("net_foreign_buy_idr") is not None]
+    if with_flow:
+        buyers  = sorted(with_flow, key=lambda x: x.get("net_foreign_buy_idr", 0), reverse=True)
+        sellers = sorted(with_flow, key=lambda x: x.get("net_foreign_buy_idr", 0))
+
+        lines.append("🌊 <b>Foreign Flow</b>")
+        for s in buyers[:3]:
+            if (s.get("net_foreign_buy_idr") or 0) <= 0:
+                break
+            ticker = s["symbol"].replace(".JK", "")
+            net_b  = s["net_foreign_buy_idr"] / 1_000_000_000
+            days   = s.get("days_consecutive", 0) or 0
+            streak = f"  ({days:+d}d)" if days else ""
+            lines.append(f"  🟢 {ticker:5s}  {net_b:+.2f}B IDR{streak}")
+
+        sell_shown = 0
+        for s in sellers[:3]:
+            if (s.get("net_foreign_buy_idr") or 0) >= 0:
+                break
+            ticker = s["symbol"].replace(".JK", "")
+            net_b  = s["net_foreign_buy_idr"] / 1_000_000_000
+            days   = s.get("days_consecutive", 0) or 0
+            streak = f"  ({days:+d}d)" if days else ""
+            lines.append(f"  🔴 {ticker:5s}  {net_b:+.2f}B IDR{streak}")
+            sell_shown += 1
+
+        lines.append("")
+
+    # ── Active scalp / momentum watchlist ────────────────────────────────
+    if scalp_summary:
+        s_total = scalp_summary.get("scalp_total", 0)
+        m_total = scalp_summary.get("momentum_total", 0)
+        if s_total or m_total:
+            lines.append(
+                f"⚡ <b>Watchlist aktif</b>  "
+                f"Scalp: {s_total}  |  Momentum: {m_total}  "
+                f"→ /scalps untuk detail"
+            )
+            lines.append("")
+
+    # ── Avoid list ────────────────────────────────────────────────────────
+    avoids = [
+        f"{s['symbol'].replace('.JK','')} ({s.get('total_score',0)})"
+        for s in stock_scores
+        if s.get("verdict") == "SKIP" and s.get("total_score", 100) < 35
+    ]
     if avoids:
-        lines.append(f"⚠️ <b>Avoid:</b> {', '.join(avoids)}")
+        lines.append(f"⚠️ <b>Hindari:</b> {', '.join(avoids)}")
 
     return "\n".join(lines)
 
