@@ -233,3 +233,96 @@ def save_bot_config(settings: dict) -> bool:
     except Exception as e:
         logger.error(f"save_bot_config: {e}")
         return False
+
+
+# ── Scalp positions ───────────────────────────────────────────────────────────
+# Collection: idx_scalp_positions/{symbol}
+# Auto-stale: positions with date != today are ignored on load.
+
+def save_scalp_position(symbol: str, pos: dict) -> bool:
+    try:
+        db = _get_db()
+        db.collection("idx_scalp_positions").document(symbol).set({
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            **pos,
+        })
+        return True
+    except Exception as e:
+        logger.error(f"save_scalp_position({symbol}): {e}")
+        return False
+
+
+def delete_scalp_position(symbol: str) -> bool:
+    try:
+        db = _get_db()
+        db.collection("idx_scalp_positions").document(symbol).delete()
+        return True
+    except Exception as e:
+        logger.error(f"delete_scalp_position({symbol}): {e}")
+        return False
+
+
+def load_scalp_positions(today: str) -> dict:
+    """
+    Load all scalp positions for today. Ignores stale docs from previous days.
+    Returns { symbol: pos_dict }.
+    """
+    try:
+        db   = _get_db()
+        docs = db.collection("idx_scalp_positions").stream()
+        out  = {}
+        for doc in docs:
+            data = doc.to_dict()
+            # entry_time is UTC ISO — check it belongs to today (WIB date)
+            if data.get("date") == today:
+                out[doc.id] = data
+        return out
+    except Exception as e:
+        logger.error(f"load_scalp_positions: {e}")
+        return {}
+
+
+# ── Momentum positions ────────────────────────────────────────────────────────
+# Collection: idx_momentum_positions/{symbol}
+# Multi-day: persisted until explicitly closed/deleted.
+
+def save_momentum_position(symbol: str, pos: dict) -> bool:
+    try:
+        db = _get_db()
+        db.collection("idx_momentum_positions").document(symbol).set({
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            **pos,
+        })
+        return True
+    except Exception as e:
+        logger.error(f"save_momentum_position({symbol}): {e}")
+        return False
+
+
+def delete_momentum_position(symbol: str) -> bool:
+    try:
+        db = _get_db()
+        db.collection("idx_momentum_positions").document(symbol).delete()
+        return True
+    except Exception as e:
+        logger.error(f"delete_momentum_position({symbol}): {e}")
+        return False
+
+
+def load_momentum_positions() -> dict:
+    """
+    Load all open momentum positions (status == 'watching').
+    Returns { symbol: pos_dict }.
+    """
+    try:
+        db   = _get_db()
+        docs = db.collection("idx_momentum_positions").stream()
+        out  = {}
+        for doc in docs:
+            data = doc.to_dict()
+            if data.get("status") == "watching":
+                out[doc.id] = data
+        return out
+    except Exception as e:
+        logger.error(f"load_momentum_positions: {e}")
+        return {}

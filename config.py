@@ -127,3 +127,10 @@ CLAUDE_MODEL      = "claude-haiku-4-5-20251001"
 # ── Telegram ──────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Comma-separated user/group IDs allowed to run commands.
+# Supports personal IDs and group chat IDs (negative numbers).
+_raw_allowed = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "310977969,-5144122635")
+TELEGRAM_ALLOWED_USER_IDS: set[int] = {
+    int(x.strip()) for x in _raw_allowed.split(",") if x.strip()
+}

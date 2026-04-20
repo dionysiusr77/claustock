@@ -34,19 +34,23 @@ SENTIMENT_EMOJI = {"POSITIVE": "✅", "NEUTRAL": "➖", "NEGATIVE": "⚠️"}
 
 # ── Core send ─────────────────────────────────────────────────────────────────
 
-def send_long_message(parts: list[str], parse_mode: str = "HTML") -> None:
+def send_long_message(
+    parts: list[str],
+    parse_mode: str = "HTML",
+    chat_id: str | int | None = None,
+) -> None:
     """
     Send a multi-part message with retry + delay between parts.
     Telegram rate-limits rapid sequential messages — 1.5s gap prevents drops.
+    chat_id: override destination (defaults to config.TELEGRAM_CHAT_ID).
     """
     import time
     for i, part in enumerate(parts, 1):
         prefix = f"<i>({i}/{len(parts)})</i>\n" if len(parts) > 1 else ""
         text   = prefix + part
 
-        # Retry up to 3 times per part
         for attempt in range(1, 4):
-            ok = send_message(text, parse_mode=parse_mode)
+            ok = send_message(text, parse_mode=parse_mode, chat_id=chat_id)
             if ok:
                 break
             logger.warning(f"send_long_message part {i}/{len(parts)} attempt {attempt} failed, retrying...")
@@ -54,20 +58,28 @@ def send_long_message(parts: list[str], parse_mode: str = "HTML") -> None:
         else:
             logger.error(f"send_long_message: part {i}/{len(parts)} failed after 3 attempts")
 
-        # Delay between parts to avoid Telegram rate limit (30 msg/sec per chat)
         if i < len(parts):
             time.sleep(1.5)
 
 
-def send_message(text: str, parse_mode: str = "HTML") -> bool:
+def send_message(
+    text: str,
+    parse_mode: str = "HTML",
+    chat_id: str | int | None = None,
+) -> bool:
+    """
+    Send a message to chat_id (defaults to config.TELEGRAM_CHAT_ID).
+    Pass chat_id explicitly to reply to a specific user or group.
+    """
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured — skipping send")
         return False
+    target = chat_id if chat_id is not None else config.TELEGRAM_CHAT_ID
     try:
         resp = requests.post(
             f"{TELEGRAM_API}/sendMessage",
             json={
-                "chat_id":    config.TELEGRAM_CHAT_ID,
+                "chat_id":    target,
                 "text":       text,
                 "parse_mode": parse_mode,
             },
@@ -386,20 +398,33 @@ class CommandPoller:
         msg = update.get("message") or update.get("edited_message")
         if not msg:
             return
+
+        chat_id = msg["chat"]["id"]
+        user_id = msg.get("from", {}).get("id")
+
+        # Allow if sender's user ID or the chat itself is in the allowlist
+        allowed = config.TELEGRAM_ALLOWED_USER_IDS
+        if allowed and user_id not in allowed and chat_id not in allowed:
+            logger.debug(f"Ignored command from unauthorized user {user_id} in chat {chat_id}")
+            return
+
         text = (msg.get("text") or "").strip()
         if not text.startswith("/"):
             return
 
-        # Extract base command (ignore args for routing)
-        cmd   = text.split()[0].lower().split("@")[0]
-        args  = text.split()[1:]
+        # Strip @BotName suffix (required in groups: /cmd@BotName)
+        cmd  = text.split()[0].lower().split("@")[0]
+        args = text.split()[1:]
 
         handler = self.handlers.get(cmd)
         if handler:
             try:
-                handler(args)
+                handler(args, chat_id=chat_id)
             except Exception as e:
                 logger.error(f"Command handler {cmd} error: {e}")
-                send_message(f"❌ Error handling {cmd}: {e}")
+                send_message(f"❌ Error handling {cmd}: {e}", chat_id=chat_id)
         else:
-            send_message(f"Unknown command: {cmd}\nType /help for available commands.")
+            send_message(
+                f"Unknown command: {cmd}\nType /help for available commands.",
+                chat_id=chat_id,
+            )

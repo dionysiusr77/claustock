@@ -44,14 +44,30 @@ _watchlist_date: str      = ""   # YYYY-MM-DD — scalp reset trigger
 
 
 def _maybe_reset():
-    """Reset scalp watchlist at the start of each new trading day."""
-    global _scalp_positions, _watchlist_date
+    """
+    On first call of the day: load persisted positions from Firestore.
+    Scalp positions are date-scoped (today only).
+    Momentum positions are multi-day (always reloaded fresh).
+    """
+    global _scalp_positions, _momentum_positions, _watchlist_date
     today = date.today().isoformat()
     if today != _watchlist_date:
-        if _scalp_positions:
-            logger.info(f"Scalper: daily reset — clearing {len(_scalp_positions)} scalp positions")
-        _scalp_positions = {}
-        _watchlist_date  = today
+        _watchlist_date = today
+
+        # Load today's scalp positions (restart-safe)
+        persisted_scalp = db.load_scalp_positions(today)
+        if persisted_scalp:
+            _scalp_positions = persisted_scalp
+            logger.info(f"Scalper: loaded {len(_scalp_positions)} scalp position(s) from Firestore")
+        else:
+            _scalp_positions = {}
+            logger.info("Scalper: new day — scalp watchlist cleared")
+
+        # Always reload momentum (multi-day, survives restarts)
+        persisted_mom = db.load_momentum_positions()
+        if persisted_mom:
+            _momentum_positions = persisted_mom
+            logger.info(f"Scalper: loaded {len(_momentum_positions)} momentum position(s) from Firestore")
 
 
 # ── Signal classifier ─────────────────────────────────────────────────────────
@@ -310,6 +326,7 @@ def scalp_scan(notify_fn=None) -> list[dict]:
                     "entry_price": current,
                     "open_price":  open_price,
                     "entry_time":  datetime.now(timezone.utc).isoformat(),
+                    "date":        today,
                     "drop_pct":    round(drop_pct, 2),
                     "rsi":         tech["rsi"],
                     "vol_ratio":   tech["volume_ratio"],
@@ -319,6 +336,7 @@ def scalp_scan(notify_fn=None) -> list[dict]:
                     "exit_price":  None,
                     "pnl_pct":     None,
                 }
+                db.save_scalp_position(symbol, _scalp_positions[symbol])
 
                 entry = {
                     "type":        "SCALP",
@@ -356,6 +374,7 @@ def scalp_scan(notify_fn=None) -> list[dict]:
                     "pnl_pct":        None,
                     "current_price":  current,
                 }
+                db.save_momentum_position(symbol, _momentum_positions[symbol])
 
                 entry = {
                     "type":        "MOMENTUM",
@@ -460,17 +479,18 @@ def update_scalp_positions(notify_fn=None):
 
 
 def _close_momentum(symbol: str, pos: dict, exit_price: float, reason: str):
-    """Mark a momentum position as closed and record P&L."""
+    """Mark a momentum position as closed, record P&L, and delete from Firestore."""
     entry   = pos["entry_price"]
     gross   = (exit_price - entry) / entry * 100
     fees    = (config.BUY_FEE_PCT + config.SELL_FEE_PCT) * 100
     net_pct = round(gross - fees, 2)
 
-    pos["exit_price"] = exit_price
-    pos["pnl_pct"]    = net_pct
-    pos["status"]     = "closed"
-    pos["exit_reason"]= reason
+    pos["exit_price"]  = exit_price
+    pos["pnl_pct"]     = net_pct
+    pos["status"]      = "closed"
+    pos["exit_reason"] = reason
 
+    db.delete_momentum_position(symbol)
     logger.info(
         f"Momentum closed ({reason}): {symbol} "
         f"entry={entry:,.0f} exit={exit_price:,.0f} P&L={net_pct:+.2f}%"
@@ -506,6 +526,7 @@ def close_scalp_positions():
         pos["pnl_pct"]    = round(net_pct, 2)
         pos["status"]     = "closed"
 
+        db.save_scalp_position(symbol, pos)   # persist final closed state
         logger.info(
             f"Scalp closed: {symbol} entry={entry:,.0f} exit={exit_price:,.0f} "
             f"P&L={net_pct:+.2f}%"
@@ -638,6 +659,7 @@ def manual_add_scalp(symbol: str) -> dict | None:
             "entry_price": current,
             "open_price":  open_price,
             "entry_time":  datetime.now(timezone.utc).isoformat(),
+            "date":        date.today().isoformat(),
             "drop_pct":    round(drop_pct, 2),
             "rsi":         tech["rsi"]          if tech else None,
             "vol_ratio":   tech["volume_ratio"] if tech else None,
@@ -647,6 +669,7 @@ def manual_add_scalp(symbol: str) -> dict | None:
             "exit_price":  None,
             "pnl_pct":     None,
         }
+        db.save_scalp_position(sym, _scalp_positions[sym])
         logger.info(f"Manual scalp add: {sym} @ {current:,.0f}")
         return _scalp_positions[sym]
     except Exception as e:

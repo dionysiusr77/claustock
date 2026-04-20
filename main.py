@@ -237,7 +237,7 @@ def presession2():
     _send_briefing(session=2)
 
 
-def _send_briefing(session: int):
+def _send_briefing(session: int, chat_id=None):
     jci = fetch_jci_summary()
     msg = tg.format_presession_briefing(
         session=session,
@@ -245,7 +245,7 @@ def _send_briefing(session: int):
         jci=jci,
         stock_scores=_latest_scores,
     )
-    tg.send_message(msg)
+    tg.send_message(msg, chat_id=chat_id)
 
 
 def eod_summary():
@@ -264,25 +264,25 @@ def eod_summary():
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def cmd_status(_args):
-    tg.send_message(tg.format_status(is_market_open(), is_trading_day(), len(_watchlist)))
+def cmd_status(_args, chat_id=None):
+    tg.send_message(tg.format_status(is_market_open(), is_trading_day(), len(_watchlist)), chat_id=chat_id)
 
 
-def cmd_stocks(_args):
+def cmd_stocks(_args, chat_id=None):
     if not _latest_scores:
-        tg.send_message("No scores yet — waiting for first scan.")
+        tg.send_message("No scores yet — waiting for first scan.", chat_id=chat_id)
         return
-    tg.send_message(tg.format_stocks_list(_latest_scores))
+    tg.send_message(tg.format_stocks_list(_latest_scores), chat_id=chat_id)
 
 
-def cmd_briefing(_args):
+def cmd_briefing(_args, chat_id=None):
     session = 1 if datetime.now(WIB).hour < 12 else 2
-    _send_briefing(session)
+    _send_briefing(session, chat_id=chat_id)
 
 
-def cmd_forecast(_args):
+def cmd_forecast(_args, chat_id=None):
     if not _latest_scores:
-        tg.send_message("No forecast data yet.")
+        tg.send_message("No forecast data yet.", chat_id=chat_id)
         return
     lines = ["📈 <b>5-Day Forecasts</b>", ""]
     for s in _latest_scores:
@@ -296,12 +296,12 @@ def cmd_forecast(_args):
             lines.append(f"{t_e} <b>{ticker}</b>  {price:,.0f} → {f5d:,.0f}  ({pct:+.1f}%)")
         else:
             lines.append(f"⚪ <b>{ticker}</b>  No forecast")
-    tg.send_message("\n".join(lines))
+    tg.send_message("\n".join(lines), chat_id=chat_id)
 
 
-def cmd_flow(_args):
+def cmd_flow(_args, chat_id=None):
     if not _latest_scores:
-        tg.send_message("No flow data yet.")
+        tg.send_message("No flow data yet.", chat_id=chat_id)
         return
     lines = ["🌊 <b>Foreign Flow Today</b>", ""]
     for s in _latest_scores:
@@ -311,12 +311,12 @@ def cmd_flow(_args):
         net_b  = net / 1_000_000_000
         emoji  = "🟢" if days > 0 else ("🔴" if days < 0 else "⚪")
         lines.append(f"{emoji} <b>{ticker}</b>  {net_b:+.2f}B IDR  ({days:+d}d)")
-    tg.send_message("\n".join(lines))
+    tg.send_message("\n".join(lines), chat_id=chat_id)
 
 
-def cmd_news(_args):
+def cmd_news(_args, chat_id=None):
     if not _latest_scores:
-        tg.send_message("No news data yet.")
+        tg.send_message("No news data yet.", chat_id=chat_id)
         return
     lines = ["📰 <b>Latest News</b>", ""]
     for s in _latest_scores:
@@ -326,74 +326,78 @@ def cmd_news(_args):
         emoji    = tg.SENTIMENT_EMOJI.get(sent, "➖")
         if headline:
             lines.append(f"{emoji} <b>{ticker}</b>: {headline[:80]}")
-    tg.send_message("\n".join(lines) if len(lines) > 2 else "No news data yet.")
+    tg.send_message("\n".join(lines) if len(lines) > 2 else "No news data yet.", chat_id=chat_id)
 
 
-def cmd_add(args):
+def cmd_add(args, chat_id=None):
     if not args:
-        tg.send_message("Usage: /add BBCA")
+        tg.send_message("Usage: /add BBCA", chat_id=chat_id)
         return
     symbol = args[0].upper()
     if add_to_watchlist(symbol):
-        tg.send_message(tg.format_watchlist_change(symbol, "add", _watchlist))
+        tg.send_message(tg.format_watchlist_change(symbol, "add", _watchlist), chat_id=chat_id)
         logger.info(f"Watchlist: added {symbol}")
     else:
-        tg.send_message(f"{symbol}.JK is already in the watchlist.")
+        tg.send_message(f"{symbol}.JK is already in the watchlist.", chat_id=chat_id)
 
 
-def cmd_remove(args):
+def cmd_remove(args, chat_id=None):
     if not args:
-        tg.send_message("Usage: /remove BBCA")
+        tg.send_message("Usage: /remove BBCA", chat_id=chat_id)
         return
     symbol = args[0].upper()
     if remove_from_watchlist(symbol):
-        tg.send_message(tg.format_watchlist_change(symbol, "remove", _watchlist))
+        tg.send_message(tg.format_watchlist_change(symbol, "remove", _watchlist), chat_id=chat_id)
         logger.info(f"Watchlist: removed {symbol}")
     else:
-        tg.send_message(f"{symbol}.JK is not in the watchlist.")
+        tg.send_message(f"{symbol}.JK is not in the watchlist.", chat_id=chat_id)
 
 
-def cmd_pnl(_args):
+def cmd_pnl(_args, chat_id=None):
     pnl = get_pnl_summary()
-    tg.send_message(tg.format_pnl(pnl))
+    tg.send_message(tg.format_pnl(pnl), chat_id=chat_id)
 
 
-def cmd_scalps(_args):
+def cmd_scalps(_args, chat_id=None):
     summary = get_scalp_summary()
-    tg.send_message(format_scalp_watchlist(summary))
+    tg.send_message(format_scalp_watchlist(summary), chat_id=chat_id)
 
 
-def cmd_scalpadd(args):
+def cmd_scalpadd(args, chat_id=None):
     if not args:
-        tg.send_message("Usage: /scalpadd BBCA")
+        tg.send_message("Usage: /scalpadd BBCA", chat_id=chat_id)
         return
     symbol = args[0].upper()
     pos = manual_add_scalp(symbol)
     if pos:
         ticker = symbol if symbol.endswith(".JK") else symbol + ".JK"
         tg.send_message(
-            f"⚡ <b>{ticker.replace('.JK','.JK')} added to scalping watchlist</b>\n"
+            f"⚡ <b>{ticker} added to scalping watchlist</b>\n"
             f"Entry price: <b>{pos['entry_price']:,.0f}</b>\n"
             f"Open price:  {pos['open_price']:,.0f}\n"
             f"Drop from open: {pos['drop_pct']:+.1f}%\n"
-            f"Monitoring until 15:49 WIB — P&L at EOD."
+            f"Monitoring until 15:49 WIB — P&L at EOD.",
+            chat_id=chat_id,
         )
     else:
-        tg.send_message(f"❌ Could not fetch data for {symbol}.")
+        tg.send_message(f"❌ Could not fetch data for {symbol}.", chat_id=chat_id)
 
 
-def cmd_analyze(args):
+def cmd_analyze(args, chat_id=None):
     if not args:
-        tg.send_message("Usage: /analyze BBCA")
+        tg.send_message("Usage: /analyze BBCA", chat_id=chat_id)
         return
     symbol = args[0].upper()
-    tg.send_message(f"🔍 Memulai analisis mendalam untuk <b>{symbol}.JK</b>...\n(~30–60 detik)")
+    tg.send_message(
+        f"🔍 Memulai analisis mendalam untuk <b>{symbol}.JK</b>...\n(~30–60 detik)",
+        chat_id=chat_id,
+    )
     logger.info(f"/analyze {symbol} triggered")
     parts = analyze_stock(symbol)
-    tg.send_long_message(parts)
+    tg.send_long_message(parts, chat_id=chat_id)
 
 
-def cmd_help(_args):
+def cmd_help(_args, chat_id=None):
     tg.send_message(
         "🤖 <b>IDX Bot Commands</b>\n\n"
         "/status        — bot + market status\n"
@@ -408,7 +412,8 @@ def cmd_help(_args):
         "/scalps        — scalping watchlist + live P&L\n"
         "/scalpadd BBCA — manually add to scalping watchlist\n"
         "/analyze BBCA  — full fundamental + technical report\n"
-        "/help          — this message"
+        "/help          — this message",
+        chat_id=chat_id,
     )
 
 
