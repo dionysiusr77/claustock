@@ -42,6 +42,7 @@ SCALP_MAX_RSI            = 50     # RSI must be BELOW this to qualify as scalp
 SCALP_MIN_DROP_FROM_OPEN = 0.5    # minimum % drop from open price to qualify
 SCALP_MAX_DROP_FROM_OPEN = 6.0    # maximum % drop — beyond this is a crash
 SCALP_MIN_SCORE          = 55     # minimum scalp score (0–100)
+REQUIRE_DIVERGENCE       = os.getenv("REQUIRE_DIVERGENCE", "false").lower() == "true"
 
 # ── Momentum settings ─────────────────────────
 MOMENTUM_MIN_RSI         = 50     # RSI must be ABOVE this for momentum

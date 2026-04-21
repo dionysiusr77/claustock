@@ -38,6 +38,67 @@ def _is_shooting_star(df: pd.DataFrame) -> bool:
     return wick >= 2 * body and tail <= body * 0.5
 
 
+def detect_bullish_divergence(
+    close: "pd.Series",
+    rsi_series: "pd.Series",
+    window: int = 40,
+) -> dict:
+    """
+    Detect bullish price/RSI divergence over the last `window` bars.
+
+    Bullish divergence: price making lower lows while RSI makes higher lows —
+    momentum recovering before price, classic bounce warning.
+
+    Finds swing lows (local minima) and counts how many consecutive pairs
+    show the divergence pattern.
+
+    Returns:
+        divergence:  bool   — at least one pair confirmed
+        swings:      int    — number of swing lows found
+        div_pairs:   int    — how many pairs show divergence
+        bonus:       int    — 0 / 12 / 20
+        label:       str    — human-readable summary
+    """
+    import numpy as np
+
+    if len(close) < 6:
+        return {"divergence": False, "swings": 0, "div_pairs": 0, "bonus": 0, "label": "insufficient data"}
+
+    c = close.iloc[-window:].values
+    r = rsi_series.iloc[-window:].values
+
+    # Find swing lows: strict local minima (both neighbours higher)
+    swings = [
+        i for i in range(1, len(c) - 1)
+        if c[i] < c[i - 1] and c[i] < c[i + 1]
+    ]
+
+    if len(swings) < 2:
+        return {"divergence": False, "swings": len(swings), "div_pairs": 0, "bonus": 0, "label": "not detected"}
+
+    # Count consecutive divergent pairs (price lower low, RSI higher low)
+    div_pairs = 0
+    for j in range(len(swings) - 1):
+        i1, i2 = swings[j], swings[j + 1]
+        if c[i2] < c[i1] and r[i2] > r[i1]:
+            div_pairs += 1
+
+    if div_pairs >= 2:
+        bonus, label = 20, f"confirmed ({len(swings)} swings)"
+    elif div_pairs == 1:
+        bonus, label = 12, "confirmed (2 swings)"
+    else:
+        bonus, label = 0, "not detected"
+
+    return {
+        "divergence": div_pairs >= 1,
+        "swings":     len(swings),
+        "div_pairs":  div_pairs,
+        "bonus":      bonus,
+        "label":      label,
+    }
+
+
 def _detect_candle_pattern(df: pd.DataFrame) -> str:
     """Returns the dominant candle pattern label, or 'neutral'."""
     if _is_bullish_engulfing(df):
@@ -107,6 +168,9 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         volume_ratio  = round(vol_completed / avg_vol, 2) if avg_vol > 0 else 1.0
         # True if today's completed bar beat both yesterday AND 20-bar average
         volume_surging = vol_completed > vol_prev and vol_completed > avg_vol
+
+        # Bullish divergence (price/RSI)
+        divergence = detect_bullish_divergence(close, rsi_series)
 
         # Candle pattern — use completed candles only (drop live bar)
         candle_pattern = _detect_candle_pattern(df.iloc[:-1])
@@ -213,6 +277,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
             "volume_ratio":         volume_ratio,
             "volume_surging":       volume_surging,
             "candle_pattern":       candle_pattern,
+            "divergence":           divergence,
             "score":                score,
             "reasons":              reasons,
         }

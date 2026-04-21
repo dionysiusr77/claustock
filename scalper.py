@@ -74,20 +74,23 @@ def _maybe_reset():
 
 def classify_signal(result: dict) -> str:
     """
-    Classify a scanner result as "SCALP", "MOMENTUM", or "SKIP".
+    Classify a scanner result as "STRONG_SCALP", "SCALP", "MOMENTUM", or "SKIP".
 
     SCALP criteria (intraday mean-reversion):
       - RSI < 40 (hard oversold cut)
       - RSI today > RSI yesterday (momentum recovering)
       - intraday drop from open between SCALP_MIN and SCALP_MAX %
       - volume today > yesterday OR volume > 20-bar avg
+      - MACD histogram turning or crossing zero
+      - base_score >= SCALP_MIN_SCORE (55)
+
+    STRONG_SCALP: SCALP criteria met AND bullish divergence confirmed.
+      If REQUIRE_DIVERGENCE=true, only STRONG_SCALP passes (plain SCALP is skipped).
 
     MOMENTUM criteria (multi-day trend continuation):
       - RSI >= MOMENTUM_MIN_RSI (default 50)
       - news_score >= MOMENTUM_MIN_NEWS_SCORE (default 12)
       - total_score >= MOMENTUM_MIN_SCORE (default 60)
-
-    Anything else → SKIP.
     """
     rsi             = result.get("rsi") or 0
     rsi_rising      = result.get("rsi_rising", False)
@@ -95,20 +98,30 @@ def classify_signal(result: dict) -> str:
     macd_crossing   = result.get("macd_crossing", False)
     volume_ratio    = result.get("volume_ratio") or 0
     volume_surging  = result.get("volume_surging", False)
-    drop_pct        = result.get("drop_pct", 0)   # positive = dropped from open
+    drop_pct        = result.get("drop_pct", 0)
+    base_score      = result.get("base_score", 0)
+    divergence      = result.get("divergence", {})
     news_score      = result.get("scores", {}).get("news", 0) if "scores" in result else result.get("news_score", 0)
     total_score     = result.get("total_score", 0)
 
-    # Scalp: RSI < 40 hard cut + RSI turning up + drop from open + volume active
-    volume_ok = volume_surging or volume_ratio >= MIN_VOL_RATIO
-    macd_ok   = macd_turning or macd_crossing
-    if (
+    # Classic scalp gates
+    volume_ok  = volume_surging or volume_ratio >= MIN_VOL_RATIO
+    macd_ok    = macd_turning or macd_crossing
+    classic_ok = (
         rsi < 40
         and rsi_rising
         and MIN_DROP_PCT <= drop_pct <= MAX_DROP_PCT
         and volume_ok
         and macd_ok
-    ):
+        and base_score >= config.SCALP_MIN_SCORE
+    )
+
+    if classic_ok:
+        div_confirmed = divergence.get("divergence", False) if isinstance(divergence, dict) else False
+        if div_confirmed:
+            return "STRONG_SCALP"
+        if config.REQUIRE_DIVERGENCE:
+            return "SKIP"
         return "SCALP"
 
     # Momentum: bullish RSI + strong news + high score
@@ -133,58 +146,67 @@ def _score_scalp_candidate(
     ma_trend: str,
     macd_turning: bool,
     macd_crossing: bool,
-) -> int:
+    divergence: dict | None = None,
+) -> tuple[int, int]:
     """
-    Score a bounce candidate 0–100.
-    Sweet spot: drop 1.5–3%, RSI <35 and rising, MACD turning, volume surging.
+    Score a bounce candidate.
+    Returns (base_score, total_score) where total = base + divergence bonus.
+    base_score is used for the SCALP_MIN_SCORE gate in classify_signal().
+    Divergence bonus is additive on top — it cannot push base below threshold.
     """
-    score = 0
+    base = 0
 
     # Drop score (0–30): sweet spot is 1.5–3%
     if 1.5 <= drop_pct < 2.0:
-        score += 20
+        base += 20
     elif 2.0 <= drop_pct < 3.0:
-        score += 30   # sweet spot
+        base += 30
     elif 3.0 <= drop_pct < 4.5:
-        score += 18
+        base += 18
     elif 4.5 <= drop_pct <= MAX_DROP_PCT:
-        score += 8
+        base += 8
 
-    # RSI score (0–20): hard-cut already applied in classify_signal; reward lower RSI
+    # RSI score (0–20)
     if rsi < 30:
-        score += 20
+        base += 20
     elif rsi < 35:
-        score += 15
+        base += 15
     elif rsi < 40:
-        score += 10
+        base += 10
 
-    # RSI direction bonus (0–10): turning up = bounce starting
+    # RSI direction bonus (0–10)
     if rsi_rising:
-        score += 10
+        base += 10
 
-    # MACD score (0–20): crossing zero is best signal
+    # MACD score (0–20)
     if macd_crossing:
-        score += 20
+        base += 20
     elif macd_turning:
-        score += 12
+        base += 12
 
-    # Volume score (0–15): surging volume = conviction
+    # Volume score (0–15)
     if volume_surging:
-        score += 15
+        base += 15
     elif vol_ratio >= 3.0:
-        score += 12
+        base += 12
     elif vol_ratio >= 2.0:
-        score += 8
+        base += 8
     elif vol_ratio >= 1.5:
-        score += 4
+        base += 4
 
-    # MA trend (0–5): avoid death spirals
+    # MA trend (0–5)
     if ma_trend == "UP":
-        score += 5
+        base += 5
     elif ma_trend == "FLAT":
-        score += 2
+        base += 2
 
-    return min(score, 100)
+    base = min(base, 100)
+
+    # Divergence bonus — additive, does not count toward base gate
+    div_bonus = divergence.get("bonus", 0) if isinstance(divergence, dict) else 0
+    total = min(base + div_bonus, 100)
+
+    return base, total
 
 
 # ── Open price fetcher ────────────────────────────────────────────────────────
@@ -286,7 +308,22 @@ def scalp_scan(notify_fn=None) -> list[dict]:
             current  = tech["price"]
             drop_pct = (open_price - current) / open_price * 100
 
-            # Build a result dict for classify_signal
+            divergence = tech.get("divergence", {})
+
+            # Compute score first so classify_signal can gate on base_score
+            base_score, total_score = _score_scalp_candidate(
+                drop_pct       = drop_pct,
+                rsi            = tech["rsi"],
+                rsi_rising     = tech["rsi_rising"],
+                vol_ratio      = tech["volume_ratio"],
+                volume_surging = tech["volume_surging"],
+                ma_trend       = tech["ma_trend"],
+                macd_turning   = tech["macd_turning"],
+                macd_crossing  = tech["macd_crossing"],
+                divergence     = divergence,
+            )
+
+            # Build context dict for classify_signal
             result_ctx = {
                 "rsi":             tech["rsi"],
                 "rsi_rising":      tech["rsi_rising"],
@@ -295,25 +332,15 @@ def scalp_scan(notify_fn=None) -> list[dict]:
                 "volume_ratio":    tech["volume_ratio"],
                 "volume_surging":  tech["volume_surging"],
                 "drop_pct":        drop_pct,
-                "total_score":     tech["score"],
+                "base_score":      base_score,
+                "total_score":     total_score,
+                "divergence":      divergence,
                 "news_score":      0,
             }
 
             signal_type = classify_signal(result_ctx)
 
-            if signal_type == "SCALP" and symbol not in already_scalp:
-                score = _score_scalp_candidate(
-                    drop_pct       = drop_pct,
-                    rsi            = tech["rsi"],
-                    rsi_rising     = tech["rsi_rising"],
-                    vol_ratio      = tech["volume_ratio"],
-                    volume_surging = tech["volume_surging"],
-                    ma_trend       = tech["ma_trend"],
-                    macd_turning   = tech["macd_turning"],
-                    macd_crossing  = tech["macd_crossing"],
-                )
-                if score < MIN_SCORE:
-                    continue
+            if signal_type in ("SCALP", "STRONG_SCALP") and symbol not in already_scalp:
                 if not _sector_allows(symbol):
                     logger.info(
                         f"Scalp sector cap: {symbol} skipped "
@@ -323,35 +350,43 @@ def scalp_scan(notify_fn=None) -> list[dict]:
                     continue
 
                 _scalp_positions[symbol] = {
-                    "entry_price": current,
-                    "open_price":  open_price,
-                    "entry_time":  datetime.now(timezone.utc).isoformat(),
-                    "date":        today,
-                    "drop_pct":    round(drop_pct, 2),
-                    "rsi":         tech["rsi"],
-                    "vol_ratio":   tech["volume_ratio"],
-                    "ma_trend":    tech["ma_trend"],
-                    "score":       score,
-                    "status":      "watching",
-                    "exit_price":  None,
-                    "pnl_pct":     None,
+                    "entry_price":      current,
+                    "open_price":       open_price,
+                    "entry_time":       datetime.now(timezone.utc).isoformat(),
+                    "date":             today,
+                    "drop_pct":         round(drop_pct, 2),
+                    "rsi":              tech["rsi"],
+                    "vol_ratio":        tech["volume_ratio"],
+                    "ma_trend":         tech["ma_trend"],
+                    "base_score":       base_score,
+                    "score":            total_score,
+                    "divergence_label": divergence.get("label", "not detected"),
+                    "divergence_bonus": divergence.get("bonus", 0),
+                    "signal_type":      signal_type,
+                    "status":           "watching",
+                    "exit_price":       None,
+                    "pnl_pct":          None,
                 }
                 db.save_scalp_position(symbol, _scalp_positions[symbol])
 
                 entry = {
-                    "type":        "SCALP",
-                    "symbol":      symbol,
-                    "entry_price": current,
-                    "open_price":  open_price,
-                    "drop_pct":    round(drop_pct, 2),
-                    "rsi":         tech["rsi"],
-                    "vol_ratio":   tech["volume_ratio"],
-                    "score":       score,
+                    "type":             signal_type,
+                    "symbol":           symbol,
+                    "entry_price":      current,
+                    "open_price":       open_price,
+                    "drop_pct":         round(drop_pct, 2),
+                    "rsi":              tech["rsi"],
+                    "vol_ratio":        tech["volume_ratio"],
+                    "base_score":       base_score,
+                    "score":            total_score,
+                    "divergence":       divergence,
                 }
                 candidates.append(entry)
                 logger.info(
-                    f"Scalp candidate: {symbol} drop={drop_pct:.1f}% "
-                    f"RSI={tech['rsi']:.0f} vol={tech['volume_ratio']:.1f}x score={score}"
+                    f"{signal_type}: {symbol} drop={drop_pct:.1f}% "
+                    f"RSI={tech['rsi']:.0f} vol={tech['volume_ratio']:.1f}x "
+                    f"base={base_score} total={total_score} "
+                    f"div={divergence.get('label','none')}"
                 )
                 if notify_fn:
                     notify_fn(_format_scalp_alert(entry))
@@ -567,15 +602,17 @@ def get_scalp_summary() -> dict:
             scalp_pnl    += pnl_pct
 
         scalp_rows.append({
-            "symbol":      symbol,
-            "entry_price": entry,
-            "open_price":  pos["open_price"],
-            "drop_pct":    pos["drop_pct"],
-            "current":     current,
-            "pnl_pct":     pnl_pct,
-            "status":      pos["status"],
-            "score":       pos["score"],
-            "rsi":         pos["rsi"],
+            "symbol":           symbol,
+            "entry_price":      entry,
+            "open_price":       pos["open_price"],
+            "drop_pct":         pos["drop_pct"],
+            "current":          current,
+            "pnl_pct":          pnl_pct,
+            "status":           pos["status"],
+            "score":            pos["score"],
+            "rsi":              pos["rsi"],
+            "signal_type":      pos.get("signal_type", "SCALP"),
+            "divergence_label": pos.get("divergence_label", ""),
         })
 
     scalp_rows.sort(key=lambda x: x["pnl_pct"], reverse=True)
@@ -680,16 +717,43 @@ def manual_add_scalp(symbol: str) -> dict | None:
 # ── Telegram formatters ───────────────────────────────────────────────────────
 
 def _format_scalp_alert(entry: dict) -> str:
-    ticker = entry["symbol"].replace(".JK", "")
+    ticker      = entry["symbol"].replace(".JK", "")
+    signal_type = entry.get("type", "SCALP")
+    div         = entry.get("divergence", {})
+    div_label   = div.get("label", "not detected") if isinstance(div, dict) else "not detected"
+    div_bonus   = div.get("bonus", 0) if isinstance(div, dict) else 0
+    base_score  = entry.get("base_score", entry.get("score", 0))
+    total_score = entry.get("score", 0)
+
+    header = (
+        f"🔥 <b>STRONG SCALP — {ticker}.JK</b>"
+        if signal_type == "STRONG_SCALP"
+        else f"⚡ <b>SCALP CANDIDATE — {ticker}.JK</b>"
+    )
+
+    div_line = (
+        f"📐 Divergence: ✅ {div_label}"
+        + (f"  <b>+{div_bonus}pts</b>" if div_bonus else "")
+        if div.get("divergence")
+        else "📐 Divergence: not detected"
+    )
+
+    score_line = (
+        f"Score:   {base_score} base + {div_bonus} div = <b>{total_score}/100</b>"
+        if div_bonus
+        else f"Score:   <b>{total_score}/100</b>"
+    )
+
     return (
-        f"⚡ <b>SCALP CANDIDATE — {ticker}.JK</b>\n"
+        f"{header}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"Open:    <b>{entry['open_price']:,.0f}</b>\n"
         f"Current: <b>{entry['entry_price']:,.0f}</b>  "
         f"(<b>-{entry['drop_pct']:.1f}%</b> from open)\n"
         f"RSI:     {entry['rsi']:.0f} (oversold)\n"
         f"Volume:  {entry['vol_ratio']:.1f}x average\n"
-        f"Score:   {entry['score']}/100\n"
+        f"{score_line}\n"
+        f"{div_line}\n"
         f"\n"
         f"🎯 Target: {entry['open_price']:,.0f}  (+{entry['drop_pct']:.1f}%)\n"
         f"🛑 SL: {entry['entry_price'] * 0.988:,.0f}  (-1.2%)\n"
@@ -756,12 +820,16 @@ def format_scalp_watchlist(summary: dict) -> str:
         lines.append("  Belum ada kandidat scalp hari ini.")
     else:
         for r in scalp_rows:
-            ticker = r["symbol"].replace(".JK", "")
-            pnl    = r["pnl_pct"]
-            emoji  = "🟢" if pnl >= 0 else "🔴"
-            status = "✅" if r["status"] == "closed" else "👀"
+            ticker   = r["symbol"].replace(".JK", "")
+            pnl      = r["pnl_pct"]
+            emoji    = "🟢" if pnl >= 0 else "🔴"
+            status   = "✅" if r["status"] == "closed" else "👀"
+            stype    = r.get("signal_type", "SCALP")
+            tag      = "🔥" if stype == "STRONG_SCALP" else "⚡"
+            div_lbl  = r.get("divergence_label", "")
+            div_part = f"  📐{div_lbl}" if div_lbl and div_lbl != "not detected" else ""
             lines.append(
-                f"{emoji}{status} <b>{ticker}</b>"
+                f"{emoji}{status}{tag} <b>{ticker}</b>"
                 f"  Entry: {r['entry_price']:,.0f}"
                 f"  Now: {r['current']:,.0f}"
                 f"  <b>{pnl:+.2f}%</b>"
@@ -770,6 +838,7 @@ def format_scalp_watchlist(summary: dict) -> str:
                 f"       Drop: -{r['drop_pct']:.1f}%"
                 f"  RSI: {r['rsi']:.0f}"
                 f"  Score: {r['score']}"
+                f"{div_part}"
             )
 
     lines.append("")
