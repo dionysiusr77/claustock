@@ -22,6 +22,7 @@ from scalper import (
     scalp_scan, update_scalp_positions, close_scalp_positions,
     get_scalp_summary, manual_add_scalp, format_scalp_watchlist,
 )
+from screener import find_top2_scalp_candidates, save_daily_scalp_watchlist
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -240,12 +241,19 @@ def presession2():
 def _send_briefing(session: int, chat_id=None):
     jci           = fetch_jci_summary()
     scalp_summary = get_scalp_summary()
+
+    # D-1 screening — find top 2 scalp candidates from yesterday's daily data
+    candidates = find_top2_scalp_candidates(_watchlist)
+    if candidates:
+        save_daily_scalp_watchlist(candidates)
+
     msg = tg.format_presession_briefing(
         session=session,
         date_str=datetime.now(WIB).strftime("%a %d %b %Y"),
         jci=jci,
         stock_scores=_latest_scores,
         scalp_summary=scalp_summary,
+        scalp_candidates=candidates,
     )
     tg.send_message(msg, chat_id=chat_id)
 

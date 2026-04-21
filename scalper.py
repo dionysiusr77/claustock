@@ -22,6 +22,19 @@ from fetcher import fetch_candles
 from indicators import calculate_indicators
 import firestore_client as db
 
+# Import deferred at call time to avoid circular imports (screener → scalper → screener)
+def _get_daily_scalp_universe() -> list[str]:
+    """Return today's D-1 screened stocks if available, else full UNIVERSE."""
+    try:
+        from screener import get_daily_scalp_watchlist
+        daily = get_daily_scalp_watchlist()
+        if daily:
+            logger.info(f"Scalp scan using D-1 watchlist: {daily}")
+            return daily
+    except Exception:
+        pass
+    return config.UNIVERSE
+
 logger = logging.getLogger(__name__)
 
 # ── Legacy filter constants (kept for _score_scalp_candidate) ─────────────────
@@ -287,8 +300,9 @@ def scalp_scan(notify_fn=None) -> list[dict]:
     candidates = []
     already_scalp     = set(_scalp_positions.keys())
     already_momentum  = set(_momentum_positions.keys())
+    universe          = _get_daily_scalp_universe()
 
-    for symbol in config.UNIVERSE:
+    for symbol in universe:
         if symbol in already_scalp and symbol in already_momentum:
             continue  # already tracking in both
 

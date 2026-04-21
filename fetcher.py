@@ -85,6 +85,15 @@ def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.D
     return df
 
 
+def fetch_daily_candles(symbol: str, period: str = "30d") -> pd.DataFrame | None:
+    """
+    Fetch daily OHLCV candles for D-1 screening.
+    period="30d" is the default; pass "60d" for enough history for MACD(26).
+    Most recent row = yesterday's finalized close (D-1).
+    """
+    return fetch_candles(symbol, interval="1d", period=period)
+
+
 def fetch_quote(symbol: str) -> dict | None:
     """
     Fetch live quote for a single stock.

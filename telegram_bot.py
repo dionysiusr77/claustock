@@ -244,6 +244,7 @@ def format_presession_briefing(
     jci: dict | None,
     stock_scores: list[dict],
     scalp_summary: dict | None = None,
+    scalp_candidates: list[dict] | None = None,
 ) -> str:
     """Format the pre-session briefing message."""
     now_wib = datetime.now(WIB).strftime("%a %d %b %Y")
@@ -366,6 +367,43 @@ def format_presession_briefing(
                 f"→ /scalps untuk detail"
             )
             lines.append("")
+
+    # ── D-1 scalp candidates ──────────────────────────────────────────────
+    lines.append("🎯 <b>Scalp Candidates (D-1 Screen)</b>")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    if scalp_candidates:
+        _MACD_LABEL = {
+            "CROSS":       "Bullish cross ✅",
+            "APPROACHING": "Approaching cross ✅",
+            "BULLISH":     "Bullish ✅",
+            "BEARISH":     "Bearish ❌",
+        }
+        for c in scalp_candidates:
+            ticker   = c["symbol"].replace(".JK", "")
+            rsi_dir  = "↑" if c["rsi_today"] > c["rsi_7d_avg"] else "↓"
+            vol_ok   = "✅" if c["vol_pass"] else "❌"
+            rsi_ok   = "✅" if c["rsi_pass"] else "❌"
+            bb_ok    = "✅" if c["bb_pass"]  else "❌"
+            lines += [
+                f"📌 <b>{ticker}</b>  |  Score: {c['total_score']}/100",
+                f"   Close D-1:   {c['close_d1']:,.0f}",
+                f"   RSI:         {c['rsi_today']}  (avg 7d: {c['rsi_7d_avg']}) {rsi_ok} {rsi_dir}",
+                f"   Volume:      {c['vol_ratio']}x avg 7d {vol_ok}",
+                f"   MACD:        {_MACD_LABEL.get(c['macd_status'], c['macd_status'])}",
+                f"   BB Position: {c['bb_position_pct']}% (below midline) {bb_ok}",
+                f"",
+                f"   🎯 Target:  {c['target_price']:,.0f} ({c['target_pct']:+.1f}%) → {c['target_label']}",
+                f"   🛑 SL:      {c['stop_loss_price']:,.0f} ({c['stop_loss_pct']:+.1f}%)",
+                f"   💬 {c['note']}",
+                f"",
+            ]
+    else:
+        lines += [
+            "⚠️ No stocks passed all 4 criteria today.",
+            "<i>Check back at Session 2 briefing.</i>",
+            "",
+        ]
 
     # ── Avoid list ────────────────────────────────────────────────────────
     avoids = [
