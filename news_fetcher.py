@@ -43,7 +43,7 @@ NEWS_CACHE_TTL_MIN = 30
 
 # ── Fetchers ──────────────────────────────────────────────────────────────────
 
-def fetch_news(symbol: str, max_age_hours: int = 24) -> list[dict]:
+def fetch_news(symbol: str, max_age_hours: int = 720) -> list[dict]:  # 720h = 30 days
     """
     Fetch recent news from Google News RSS.
     Returns list of: { headline, source, age_hours, url }
@@ -59,7 +59,7 @@ def fetch_news(symbol: str, max_age_hours: int = 24) -> list[dict]:
         feed = feedparser.parse(url)
         now  = datetime.now(timezone.utc)
 
-        for entry in feed.entries[:8]:
+        for entry in feed.entries[:15]:
             try:
                 pub = parsedate_to_datetime(entry.published)
                 age_hours = (now - pub).total_seconds() / 3600
@@ -104,13 +104,33 @@ def fetch_idx_announcements(symbol: str) -> list[dict]:
         data = resp.json()
 
         announcements = data if isinstance(data, list) else data.get("announcements", [])
-        for ann in announcements[:5]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        for ann in announcements[:10]:
+            raw_date = ann.get("tanggal") or ann.get("date", "")
+            try:
+                # IDX dates are typically "YYYY-MM-DD" or "DD/MM/YYYY"
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S"):
+                    try:
+                        ann_dt = datetime.strptime(raw_date[:10], fmt[:8] if "T" not in fmt else fmt)
+                        ann_dt = ann_dt.replace(tzinfo=timezone.utc)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    ann_dt = cutoff  # can't parse → include by default
+                if ann_dt < cutoff:
+                    continue
+            except Exception:
+                pass  # unparseable date — include
+
             items.append({
                 "title": ann.get("judul") or ann.get("title", ""),
-                "date":  ann.get("tanggal") or ann.get("date", ""),
+                "date":  raw_date,
                 "type":  ann.get("jenis") or ann.get("type", ""),
                 "url":   ann.get("url", ""),
             })
+            if len(items) >= 5:
+                break
     except Exception as e:
         logger.warning(f"fetch_idx_announcements({symbol}): {e}")
 
