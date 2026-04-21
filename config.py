@@ -32,10 +32,11 @@ UNIVERSE = [
 ]
 
 # Whale scanner settings
-WHALE_TOP_N           = 3     # number of high-volume stocks to surface per scan
-WHALE_VOL_THRESHOLD   = 3.0   # volume ratio must be >= this to qualify
-WHALE_MIN_SCORE       = 55    # minimum tech score (0-35 scale) to auto-add
-WHALE_AUTO_ADD        = True  # if True, auto-add to watchlist; else just notify
+WHALE_TOP_N               = 3     # number of high-volume stocks to surface per scan
+WHALE_VOL_THRESHOLD       = 3.0   # volume ratio must be >= this to qualify
+WHALE_MIN_SCORE           = 55    # minimum tech score (0-35 scale) to auto-add
+WHALE_AUTO_ADD            = True  # if True, auto-add to watchlist; else just notify
+WHALE_CONFIRM_THRESHOLD   = 5.0   # vol ratio >= this sends a Yes/No Telegram prompt instead of auto-deciding
 
 # ── Scalper settings ──────────────────────────
 SCALP_MAX_RSI            = 50     # RSI must be BELOW this to qualify as scalp

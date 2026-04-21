@@ -181,11 +181,42 @@ def _save_snapshot(symbol: str, result: dict):
 
 # ── Whale scanner ─────────────────────────────────────────────────────────────
 
+def _handle_whale_callback(data: str, callback_query_id: str, message_id: int, chat_id: int):
+    """Called when user taps ✅ Add or ❌ Skip on a whale confirm prompt."""
+    if data.startswith("whale_add_"):
+        symbol = data[len("whale_add_"):]
+        ticker = symbol.replace(".JK", "")
+        added  = add_to_watchlist(symbol)
+        if added:
+            tg.answer_callback_query(callback_query_id, f"✅ {ticker} added!")
+            tg.edit_message_text(
+                chat_id, message_id,
+                f"🐋 <b>WHALE SURGE — {ticker}.JK</b>\n✅ Added to watchlist — tracking started.",
+            )
+            logger.info(f"Whale confirm: {symbol} manually added to watchlist")
+        else:
+            tg.answer_callback_query(callback_query_id, f"{ticker} already in watchlist.")
+            tg.edit_message_text(
+                chat_id, message_id,
+                f"🐋 <b>WHALE SURGE — {ticker}.JK</b>\n⚠️ Already in watchlist.",
+            )
+
+    elif data.startswith("whale_skip_"):
+        symbol = data[len("whale_skip_"):]
+        ticker = symbol.replace(".JK", "")
+        tg.answer_callback_query(callback_query_id, f"Skipped {ticker}.")
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"🐋 <b>WHALE SURGE — {ticker}.JK</b>\n❌ Skipped.",
+        )
+        logger.info(f"Whale confirm: {symbol} skipped by user")
+
+
 def whale_scan():
     """
     Scan the broader UNIVERSE for abnormal volume surges.
-    Surfaces top N stocks by volume ratio that aren't already in watchlist.
-    If WHALE_AUTO_ADD is True and tech score qualifies, adds to watchlist.
+    vol >= WHALE_CONFIRM_THRESHOLD (5×): sends a Yes/No Telegram prompt for manual decision.
+    vol >= WHALE_VOL_THRESHOLD (3×):    auto-adds if WHALE_AUTO_ADD and tech score qualifies.
     """
     candidates = [s for s in config.UNIVERSE if s not in _watchlist]
     if not candidates:
@@ -218,15 +249,21 @@ def whale_scan():
     logger.info(f"Whale scan — {len(top)} surge(s) found: {[s[0] for s in top]}")
 
     for symbol, vol_ratio, tech_score, tech in top:
-        auto_added = False
-        if config.WHALE_AUTO_ADD and tech_score >= config.WHALE_MIN_SCORE:
-            added = add_to_watchlist(symbol)
-            if added:
-                auto_added = True
-                logger.info(f"Whale: auto-added {symbol} to watchlist (vol={vol_ratio:.1f}x score={tech_score})")
-
-        msg = tg.format_whale_alert(symbol, vol_ratio, tech_score, auto_added)
-        tg.send_message(msg)
+        if vol_ratio >= config.WHALE_CONFIRM_THRESHOLD:
+            # Extreme surge — send a manual confirm prompt
+            text, keyboard = tg.format_whale_confirm(symbol, vol_ratio, tech_score)
+            tg.send_message_with_keyboard(text, keyboard)
+            logger.info(f"Whale: confirm prompt sent for {symbol} (vol={vol_ratio:.1f}x)")
+        else:
+            # Normal surge — auto-add if score qualifies, else just notify
+            auto_added = False
+            if config.WHALE_AUTO_ADD and tech_score >= config.WHALE_MIN_SCORE:
+                added = add_to_watchlist(symbol)
+                if added:
+                    auto_added = True
+                    logger.info(f"Whale: auto-added {symbol} (vol={vol_ratio:.1f}x score={tech_score})")
+            msg = tg.format_whale_alert(symbol, vol_ratio, tech_score, auto_added)
+            tg.send_message(msg)
 
 
 # ── Scheduled jobs ────────────────────────────────────────────────────────────
@@ -461,21 +498,26 @@ def main():
     warmup_models(_watchlist)
 
     # Start Telegram command poller in background
-    poller = tg.CommandPoller({
-        "/status":   cmd_status,
-        "/stocks":   cmd_stocks,
-        "/briefing": cmd_briefing,
-        "/forecast": cmd_forecast,
-        "/flow":     cmd_flow,
-        "/news":     cmd_news,
-        "/add":      cmd_add,
-        "/remove":   cmd_remove,
-        "/pnl":      cmd_pnl,
-        "/scalps":   cmd_scalps,
-        "/scalpadd": cmd_scalpadd,
-        "/analyze":  cmd_analyze,
-        "/help":     cmd_help,
-    })
+    poller = tg.CommandPoller(
+        handlers={
+            "/status":   cmd_status,
+            "/stocks":   cmd_stocks,
+            "/briefing": cmd_briefing,
+            "/forecast": cmd_forecast,
+            "/flow":     cmd_flow,
+            "/news":     cmd_news,
+            "/add":      cmd_add,
+            "/remove":   cmd_remove,
+            "/pnl":      cmd_pnl,
+            "/scalps":   cmd_scalps,
+            "/scalpadd": cmd_scalpadd,
+            "/analyze":  cmd_analyze,
+            "/help":     cmd_help,
+        },
+        callback_handlers={
+            "whale_": _handle_whale_callback,
+        },
+    )
     poller.start()
 
     # Immediate scan

@@ -62,6 +62,68 @@ def send_long_message(
             time.sleep(1.5)
 
 
+def send_message_with_keyboard(
+    text: str,
+    keyboard: list[list[dict]],
+    parse_mode: str = "HTML",
+    chat_id: str | int | None = None,
+) -> bool:
+    """Send a message with an inline keyboard (buttons)."""
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+        return False
+    target = chat_id if chat_id is not None else config.TELEGRAM_CHAT_ID
+    try:
+        resp = requests.post(
+            f"{TELEGRAM_API}/sendMessage",
+            json={
+                "chat_id":      target,
+                "text":         text,
+                "parse_mode":   parse_mode,
+                "reply_markup": {"inline_keyboard": keyboard},
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"send_message_with_keyboard failed: {e}")
+        return False
+
+
+def answer_callback_query(callback_query_id: str, text: str = "") -> None:
+    """Acknowledge a button press (removes the loading spinner)."""
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text},
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"answer_callback_query failed: {e}")
+
+
+def edit_message_text(
+    chat_id: str | int,
+    message_id: int,
+    text: str,
+    parse_mode: str = "HTML",
+) -> None:
+    """Replace the text of an existing message (used to update confirm prompts)."""
+    try:
+        requests.post(
+            f"{TELEGRAM_API}/editMessageText",
+            json={
+                "chat_id":    chat_id,
+                "message_id": message_id,
+                "text":       text,
+                "parse_mode": parse_mode,
+            },
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning(f"edit_message_text failed: {e}")
+
+
 def send_message(
     text: str,
     parse_mode: str = "HTML",
@@ -177,13 +239,29 @@ def format_signal_with_ai(symbol: str, snapshot: dict, ai: dict | None) -> str:
 
 def format_whale_alert(symbol: str, vol_ratio: float, score: int, auto_added: bool) -> str:
     ticker = symbol.replace(".JK", "")
-    action = "Added to watchlist" if auto_added else "Not added (below score threshold)"
+    action = "✅ Added to watchlist" if auto_added else "⏭ Not added (below score threshold)"
     return (
         f"🐋 <b>WHALE DETECTED — {ticker}.JK</b>\n"
-        f"Volume surge: <b>{vol_ratio:.1f}x</b> average\n"
+        f"Volume surge: <b>{vol_ratio:.1f}×</b> average\n"
         f"Tech score: {score}/35\n"
         f"{action}"
     )
+
+
+def format_whale_confirm(symbol: str, vol_ratio: float, score: int) -> tuple[str, list]:
+    """Returns (message_text, inline_keyboard) for a manual-confirm whale prompt."""
+    ticker = symbol.replace(".JK", "")
+    text = (
+        f"🐋 <b>WHALE SURGE — {ticker}.JK</b>\n"
+        f"Volume: <b>{vol_ratio:.1f}×</b> above average\n"
+        f"Tech score: {score}/35\n\n"
+        f"Add <b>{ticker}</b> to the intraday watchlist?"
+    )
+    keyboard = [[
+        {"text": "✅ Add to watchlist", "callback_data": f"whale_add_{symbol}"},
+        {"text": "❌ Skip",             "callback_data": f"whale_skip_{symbol}"},
+    ]]
+    return text, keyboard
 
 
 def format_pnl(pnl: dict) -> str:
@@ -408,19 +486,19 @@ def format_stocks_list(stock_scores: list[dict]) -> str:
 
 class CommandPoller:
     """
-    Long-polls Telegram for commands in a background thread.
-    Calls handler functions injected at construction time.
+    Long-polls Telegram for commands and inline keyboard callbacks in a background thread.
+
+    handlers:          { "/command": fn(args, chat_id) }
+    callback_handlers: { "prefix_": fn(data, callback_query_id, message_id, chat_id) }
+                       Matched by prefix — first match wins.
     """
 
-    def __init__(self, handlers: dict):
-        """
-        handlers: dict mapping command string → callable
-        e.g. { "/status": fn, "/stocks": fn }
-        """
-        self.handlers  = handlers
-        self.offset    = 0
-        self._stop     = threading.Event()
-        self._thread   = None
+    def __init__(self, handlers: dict, callback_handlers: dict | None = None):
+        self.handlers          = handlers
+        self.callback_handlers = callback_handlers or {}
+        self.offset            = 0
+        self._stop             = threading.Event()
+        self._thread           = None
 
     def start(self):
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -447,6 +525,11 @@ class CommandPoller:
                 time.sleep(5)
 
     def _handle_update(self, update: dict):
+        # Inline keyboard button press
+        if "callback_query" in update:
+            self._handle_callback(update["callback_query"])
+            return
+
         msg = update.get("message") or update.get("edited_message")
         if not msg:
             return
@@ -480,3 +563,26 @@ class CommandPoller:
                 f"Unknown command: {cmd}\nType /help for available commands.",
                 chat_id=chat_id,
             )
+
+    def _handle_callback(self, cq: dict):
+        user_id    = cq.get("from", {}).get("id")
+        cq_msg     = cq.get("message", {})
+        chat_id    = cq_msg.get("chat", {}).get("id")
+        message_id = cq_msg.get("message_id")
+        data       = cq.get("data", "")
+
+        allowed = config.TELEGRAM_ALLOWED_USER_IDS
+        if allowed and user_id not in allowed and chat_id not in allowed:
+            answer_callback_query(cq["id"], "Not authorized.")
+            return
+
+        for prefix, handler in self.callback_handlers.items():
+            if data.startswith(prefix):
+                try:
+                    handler(data, cq["id"], message_id, chat_id)
+                except Exception as e:
+                    logger.error(f"Callback handler '{prefix}' error: {e}")
+                    answer_callback_query(cq["id"], "Error processing request.")
+                return
+
+        answer_callback_query(cq["id"])
