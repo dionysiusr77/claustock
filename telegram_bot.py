@@ -290,6 +290,7 @@ def format_presession_briefing(
         for c in scalp_candidates:
             ticker  = c["symbol"].replace(".JK", "")
             rsi_dir = "↑" if c["rsi_today"] > c["rsi_7d_avg"] else "↓"
+            is_s1   = c.get("is_s1", False)
 
             # 5-day forecast from live scan data (may be None before first scan)
             sc      = score_map.get(c["symbol"], {})
@@ -304,14 +305,32 @@ def format_presession_briefing(
                     f"  ({t_pct:+.1f}%) {trend_e}"
                 )
             else:
-                forecast_line = f"   📈 5D Forecast: pending first scan"
+                forecast_line = "   📈 5D Forecast: pending first scan"
+
+            if is_s1:
+                drop_e     = "🔴" if c["drop_from_open_pct"] < 0 else "🟢"
+                price_line = (
+                    f"   S1 Close:     {c['close_d1']:,.0f}"
+                    f"  (Open: {c['open_price']:,.0f},"
+                    f" {drop_e}{c['drop_from_open_pct']:+.1f}%)"
+                )
+                score_label = "S1 Score"
+                rsi_ref     = f"avg last 5 S1: {c['rsi_7d_avg']}"
+                vol_label   = "Volume S1:"
+                vol_ref     = "avg S1 last week"
+            else:
+                price_line  = f"   Close D-1:    {c['close_d1']:,.0f}"
+                score_label = "D-1 Score"
+                rsi_ref     = f"avg 7d: {c['rsi_7d_avg']}"
+                vol_label   = "Volume:    "
+                vol_ref     = "avg 7d"
 
             lines += [
-                f"📌 <b>{ticker}</b>  |  D-1 Score: {c['total_score']}/100",
-                f"   Close D-1:    {c['close_d1']:,.0f}",
+                f"📌 <b>{ticker}</b>  |  {score_label}: {c['total_score']}/100",
+                price_line,
                 forecast_line,
-                f"   RSI:          {c['rsi_today']}  (avg 7d: {c['rsi_7d_avg']}) ✅ {rsi_dir}",
-                f"   Volume:       {c['vol_ratio']}x avg 7d ✅",
+                f"   RSI:          {c['rsi_today']}  ({rsi_ref}) ✅ {rsi_dir}",
+                f"   {vol_label}   {c['vol_ratio']}x {vol_ref} ✅",
                 f"   MACD:         {_MACD_LABEL.get(c['macd_status'], c['macd_status'])}",
                 f"   BB Position:  {c['bb_position_pct']}% ✅",
                 f"",

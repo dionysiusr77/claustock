@@ -22,7 +22,10 @@ from scalper import (
     scalp_scan, update_scalp_positions, close_scalp_positions,
     get_scalp_summary, manual_add_scalp, format_scalp_watchlist,
 )
-from screener import find_top2_scalp_candidates, save_daily_scalp_watchlist
+from screener import (
+    find_top2_scalp_candidates, save_daily_scalp_watchlist,
+    find_top2_s1_candidates,    save_s1_watchlist,
+)
 import firestore_client as db
 from scheduler import build_scheduler, is_market_open, is_trading_day, WIB
 import telegram_bot as tg
@@ -242,10 +245,16 @@ def _send_briefing(session: int, chat_id=None):
     jci           = fetch_jci_summary()
     scalp_summary = get_scalp_summary()
 
-    # D-1 screening — find top 2 scalp candidates from yesterday's daily data
-    candidates = find_top2_scalp_candidates(_watchlist)
-    if candidates:
-        save_daily_scalp_watchlist(candidates)
+    if session == 2:
+        # Session 2 (midday break): use today's Session 1 intraday data
+        candidates = find_top2_s1_candidates(_watchlist)
+        if candidates:
+            save_s1_watchlist(candidates)
+    else:
+        # Session 1 (pre-open): use yesterday's daily (D-1) data
+        candidates = find_top2_scalp_candidates(_watchlist)
+        if candidates:
+            save_daily_scalp_watchlist(candidates)
 
     msg = tg.format_presession_briefing(
         session=session,
