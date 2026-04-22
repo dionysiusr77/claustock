@@ -49,10 +49,11 @@ def screen_stock_d1(symbol: str) -> dict | None:
     rsi_7d_slice = rsi_series.iloc[-8:-1].dropna()
     rsi_7d_avg  = round(float(rsi_7d_slice.mean()), 2) if len(rsi_7d_slice) >= 3 else rsi_today
 
+    # RSI must be < 30 AND rising above 7d avg to confirm oversold + uptrend
     if rsi_today < 30 and rsi_today > rsi_7d_avg:
         rsi_score, rsi_pass = 30, True
     elif rsi_today < 30:
-        rsi_score, rsi_pass = 15, True
+        rsi_score, rsi_pass = 15, False  # oversold but not yet turning up — score but don't pass
     else:
         rsi_score, rsi_pass = 0, False
 
@@ -66,7 +67,7 @@ def screen_stock_d1(symbol: str) -> dict | None:
         vol_score, vol_pass = 25, True
     elif vol_ratio >= 1.5:
         vol_score, vol_pass = 18, True
-    elif vol_ratio >= 1.0:
+    elif vol_ratio > 1.0:
         vol_score, vol_pass = 10, True
     else:
         vol_score, vol_pass = 0, False
@@ -87,25 +88,21 @@ def screen_stock_d1(symbol: str) -> dict | None:
     gap_d1 = sl_d1 - ml_d1   # positive = MACD below signal (bearish)
     gap_d2 = sl_d2 - ml_d2
 
-    disqualify_reason = None
-
     if ml_d2 < sl_d2 and ml_d1 >= sl_d1:
-        # Case A: bullish cross just happened
-        macd_status, macd_score, macd_pass = "CROSS", 25, True
+        # Bullish cross just happened
+        macd_status, macd_score, macd_pass = "CROSS",       25, True
     elif hist_d1 > hist_d2 and hist_d1 < 0 and gap_d1 < gap_d2:
-        # Case B: histogram rising toward zero, gap narrowing
+        # Histogram rising toward zero, gap narrowing — approaching cross
         macd_status, macd_score, macd_pass = "APPROACHING", 18, True
     elif ml_d1 > sl_d1 and hist_d1 > 0:
-        # Case C: already above signal line
-        macd_status, macd_score, macd_pass = "BULLISH", 10, True
+        # Already above signal — scores but cross already passed, not a setup
+        macd_status, macd_score, macd_pass = "BULLISH",     10, False
     else:
-        # Case D: bearish — disqualify
-        macd_status, macd_score, macd_pass = "BEARISH", 0, False
-        disqualify_reason = "MACD bearish"
+        macd_status, macd_score, macd_pass = "BEARISH",      0, False
 
     macd_gap = round(gap_d1, 4)
 
-    # ── Param 4 — Bollinger Bands(20, 2) ──────────────────────────────────
+    # ── Param 4 — Bollinger Bands(20, 2) — optional bonus ─────────────────
     bb_obj   = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
     bb_upper = round(float(bb_obj.bollinger_hband().iloc[-1]), 2)
     bb_mid   = round(float(bb_obj.bollinger_mavg().iloc[-1]), 2)
@@ -118,20 +115,14 @@ def screen_stock_d1(symbol: str) -> dict | None:
     if price_d1 <= bb_lower:
         bb_score, bb_pass = 20, True
     elif price_d1 <= bb_mid * 0.995:
-        # Clearly below midline
         bb_score, bb_pass = 12, True
     elif price_d1 <= bb_mid:
-        # Right at midline (within 0.5%)
-        bb_score, bb_pass = 5, True
+        bb_score, bb_pass = 5,  True
     else:
-        # Above midline — disqualify
-        bb_score, bb_pass = 0, False
-        if disqualify_reason is None:
-            disqualify_reason = "Price above BB midline"
+        bb_score, bb_pass = 0,  False   # above midline — no bonus, but not a blocker
 
     # ── Param 5 — BB-based target ──────────────────────────────────────────
     if price_d1 <= bb_mid * 0.995:
-        # Below midline — target BB mid
         target_price = round(bb_mid)
         target_pct   = round((bb_mid - price_d1) / price_d1 * 100, 2)
         target_label = "BB Middle Band"
@@ -140,7 +131,6 @@ def screen_stock_d1(symbol: str) -> dict | None:
         else:
             note = "Below midline — targeting mean reversion to BB mid"
     else:
-        # Right at midline — aim for upper band
         target_price = round(bb_upper)
         target_pct   = round((bb_upper - price_d1) / price_d1 * 100, 2)
         target_label = "BB Upper Band"
@@ -149,9 +139,16 @@ def screen_stock_d1(symbol: str) -> dict | None:
     stop_loss_price = round(price_d1 * 0.985, 2)
     stop_loss_pct   = -1.5
 
-    # ── Qualification ──────────────────────────────────────────────────────
-    total_score  = rsi_score + vol_score + macd_score + bb_score
-    qualified    = rsi_pass and vol_pass and macd_pass and bb_pass
+    # ── Qualification — 3 mandatory criteria; BB is optional bonus ─────────
+    total_score      = rsi_score + vol_score + macd_score + bb_score
+    qualified        = rsi_pass and vol_pass and macd_pass
+    disqualify_reason = (
+        "RSI not confirmed uptrend" if not rsi_pass and rsi_today < 30 else
+        "RSI not oversold"          if not rsi_pass else
+        "Volume below avg"          if not vol_pass else
+        "MACD not approaching cross" if not macd_pass else
+        None
+    )
     disqualified = disqualify_reason is not None
 
     try:
@@ -332,10 +329,11 @@ def screen_stock_s1(symbol: str) -> dict | None:
 
     rsi_7d_avg = round(float(pd.Series(rsi_end_vals).mean()), 2) if rsi_end_vals else rsi_today
 
+    # RSI must be < 30 AND rising above avg to confirm oversold + uptrend
     if rsi_today < 30 and rsi_today > rsi_7d_avg:
         rsi_score, rsi_pass = 30, True
     elif rsi_today < 30:
-        rsi_score, rsi_pass = 15, True
+        rsi_score, rsi_pass = 15, False  # oversold but not yet turning up
     else:
         rsi_score, rsi_pass = 0, False
 
@@ -354,7 +352,7 @@ def screen_stock_s1(symbol: str) -> dict | None:
         vol_score, vol_pass = 25, True
     elif vol_ratio >= 1.5:
         vol_score, vol_pass = 18, True
-    elif vol_ratio >= 1.0:
+    elif vol_ratio > 1.0:
         vol_score, vol_pass = 10, True
     else:
         vol_score, vol_pass = 0, False
@@ -371,21 +369,19 @@ def screen_stock_s1(symbol: str) -> dict | None:
 
     gap_d1 = sl_d1 - ml_d1
     gap_d2 = sl_d2 - ml_d2
-    disqualify_reason = None
 
     if ml_d2 < sl_d2 and ml_d1 >= sl_d1:
         macd_status, macd_score, macd_pass = "CROSS",       25, True
     elif hist_d1 > hist_d2 and hist_d1 < 0 and gap_d1 < gap_d2:
         macd_status, macd_score, macd_pass = "APPROACHING", 18, True
     elif ml_d1 > sl_d1 and hist_d1 > 0:
-        macd_status, macd_score, macd_pass = "BULLISH",     10, True
+        macd_status, macd_score, macd_pass = "BULLISH",     10, False  # cross already happened
     else:
-        macd_status, macd_score, macd_pass = "BEARISH",     0,  False
-        disqualify_reason = "MACD bearish"
+        macd_status, macd_score, macd_pass = "BEARISH",      0, False
 
     macd_gap = round(gap_d1, 4)
 
-    # ── Param 4 — Bollinger Bands(20, 2) ──────────────────────────────────
+    # ── Param 4 — Bollinger Bands(20, 2) — optional bonus ─────────────────
     bb_obj   = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
     bb_upper = round(float(bb_obj.bollinger_hband().iloc[-1]), 2)
     bb_mid   = round(float(bb_obj.bollinger_mavg().iloc[-1]),  2)
@@ -401,9 +397,7 @@ def screen_stock_s1(symbol: str) -> dict | None:
     elif price_now <= bb_mid:
         bb_score, bb_pass = 5,  True
     else:
-        bb_score, bb_pass = 0,  False
-        if disqualify_reason is None:
-            disqualify_reason = "Price above BB midline"
+        bb_score, bb_pass = 0,  False   # above midline — no bonus, not a blocker
 
     # ── Target / SL ───────────────────────────────────────────────────────
     if price_now <= bb_mid * 0.995:
@@ -421,9 +415,16 @@ def screen_stock_s1(symbol: str) -> dict | None:
     stop_loss_price = round(price_now * 0.985, 2)
     stop_loss_pct   = -1.5
 
-    # ── Qualification ──────────────────────────────────────────────────────
-    total_score = rsi_score + vol_score + macd_score + bb_score
-    qualified   = rsi_pass and vol_pass and macd_pass and bb_pass
+    # ── Qualification — 3 mandatory criteria; BB is optional bonus ─────────
+    total_score      = rsi_score + vol_score + macd_score + bb_score
+    qualified        = rsi_pass and vol_pass and macd_pass
+    disqualify_reason = (
+        "RSI not confirmed uptrend" if not rsi_pass and rsi_today < 30 else
+        "RSI not oversold"          if not rsi_pass else
+        "Volume below avg"          if not vol_pass else
+        "MACD not approaching cross" if not macd_pass else
+        None
+    )
 
     try:
         date_s1 = str(today_s1.index[-1].date())

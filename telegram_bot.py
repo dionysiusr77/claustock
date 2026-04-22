@@ -410,7 +410,8 @@ def format_presession_briefing(
                 f"   RSI:          {c['rsi_today']}  ({rsi_ref}) ✅ {rsi_dir}",
                 f"   {vol_label}   {c['vol_ratio']}x {vol_ref} ✅",
                 f"   MACD:         {_MACD_LABEL.get(c['macd_status'], c['macd_status'])}",
-                f"   BB Position:  {c['bb_position_pct']}% ✅",
+                f"   BB Position:  {c['bb_position_pct']}%"
+                + (" ✅" if c.get("bb_pass") else " ➖ <i>(optional)</i>"),
                 f"",
                 f"   🎯 Target:  {c['target_price']:,.0f} ({c['target_pct']:+.1f}%) → {c['target_label']}",
                 f"   🛑 SL:      {c['stop_loss_price']:,.0f} ({c['stop_loss_pct']:+.1f}%)",
