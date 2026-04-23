@@ -212,9 +212,27 @@ def _handle_whale_callback(data: str, callback_query_id: str, message_id: int, c
         logger.info(f"Whale confirm: {symbol} skipped by user")
 
 
+def _daily_volume_ratio(symbol: str) -> float | None:
+    """
+    Compare today's total volume to the average of the last 5 trading days.
+    Uses daily candles so the ratio reflects a genuine full-day surge, not a
+    single 5-minute spike (which is what calculate_indicators returns).
+    Returns None if data is unavailable.
+    """
+    from fetcher import fetch_daily_candles
+    df = fetch_daily_candles(symbol, period="10d")
+    if df is None or len(df) < 2:
+        return None
+    # Most recent row = today (or last trading day); rows before it = history
+    today_vol = float(df["volume"].iloc[-1])
+    avg_vol   = float(df["volume"].iloc[-6:-1].mean())  # avg of previous 5 days
+    return round(today_vol / avg_vol, 2) if avg_vol > 0 else None
+
+
 def whale_scan():
     """
     Scan the broader UNIVERSE for abnormal volume surges.
+    Volume ratio is computed on daily candles (today vs avg of last 5 days).
     vol >= WHALE_CONFIRM_THRESHOLD (5×): sends a Yes/No Telegram prompt for manual decision.
     vol >= WHALE_VOL_THRESHOLD (3×):    auto-adds if WHALE_AUTO_ADD and tech score qualifies.
     """
@@ -227,14 +245,17 @@ def whale_scan():
 
     for symbol in candidates:
         try:
+            vol_ratio = _daily_volume_ratio(symbol)
+            if vol_ratio is None or vol_ratio < config.WHALE_VOL_THRESHOLD:
+                continue
+            # Only fetch 5m candles + indicators for stocks that already passed volume gate
             df = fetch_candles(symbol, interval=config.CANDLE_INTERVAL, period="5d")
             if df is None:
                 continue
             tech = calculate_indicators(df)
             if tech is None:
                 continue
-            if tech["volume_ratio"] >= config.WHALE_VOL_THRESHOLD:
-                surges.append((symbol, tech["volume_ratio"], tech["score"], tech))
+            surges.append((symbol, vol_ratio, tech["score"], tech))
         except Exception as e:
             logger.warning(f"Whale scan {symbol}: {e}")
 

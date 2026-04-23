@@ -102,7 +102,7 @@ EOD_TIME       = (16, 0)   # End of day summary
 SCAN_INTERVAL_SEC = 300    # 5 minutes during market hours
 
 # ── Scoring weights ───────────────────────────
-WEIGHT_TECHNICAL = 35
+WEIGHT_TECHNICAL = 40
 WEIGHT_PROPHET   = 25
 WEIGHT_FOREIGN   = 20
 WEIGHT_NEWS      = 20

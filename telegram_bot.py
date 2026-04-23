@@ -221,13 +221,20 @@ def format_signal_with_ai(symbol: str, snapshot: dict, ai: dict | None) -> str:
             f"⚠️ T+2 settlement — capital locked 2 days after sell",
         ]
 
+    vwap      = snapshot.get("vwap")
+    vwap_pct  = snapshot.get("vwap_pct")
+    vwap_line = ""
+    if vwap and vwap_pct is not None:
+        vwap_e    = "🔴" if vwap_pct < -1 else ("🟡" if vwap_pct < 0 else "🟢")
+        vwap_line = f"  VWAP {vwap:,.0f} {vwap_e}{vwap_pct:+.1f}%"
+
     lines = [
         f"📡 <b>SIGNAL — {ticker}.JK</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"💰 Price: <b>{price:,.0f}</b>",
+        f"💰 Price: <b>{price:,.0f}</b>{vwap_line}",
         f"📊 Score: <b>{score}/100 → {verdict}</b>",
         "",
-        f"Technical:    <b>{t_score}/35</b>  RSI {rsi:.0f}, MA {ma_trend}, vol {vol_ratio:.1f}x",
+        f"Technical:    <b>{t_score}/40</b>  RSI {rsi:.0f}, MA {ma_trend}, vol {vol_ratio:.1f}x",
         f"Forecast:     <b>{p_score}/25</b>"
         + (f"  {trend_pct:+.1f}% trend next 5d" if trend_pct is not None else ""),
         f"Foreign flow: <b>{f_score}/20</b>"

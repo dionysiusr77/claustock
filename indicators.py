@@ -1,8 +1,36 @@
 import pandas as pd
+import pytz
 import ta
 import logging
 
 logger = logging.getLogger(__name__)
+
+_WIB = pytz.timezone("Asia/Jakarta")
+
+
+def _calc_vwap(df: pd.DataFrame) -> float | None:
+    """
+    Compute today's session VWAP from 5-minute bars.
+    Resets at market open each day — only today's bars are used.
+    Returns None if today has fewer than 3 bars (e.g. called pre-market).
+    """
+    idx = df.index
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC").tz_convert(_WIB)
+    else:
+        idx = idx.tz_convert(_WIB)
+
+    today      = idx[-1].date()
+    today_mask = idx.date == today
+    if today_mask.sum() < 3:
+        return None
+
+    t = df[today_mask]
+    typical = (t["high"] + t["low"] + t["close"]) / 3
+    total_vol = t["volume"].sum()
+    if total_vol == 0:
+        return None
+    return round(float((typical * t["volume"]).sum() / total_vol), 2)
 
 # ── Candle pattern helpers ────────────────────────────────────────────────────
 
@@ -169,6 +197,15 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         # True if today's completed bar beat both yesterday AND 20-bar average
         volume_surging = vol_completed > vol_prev and vol_completed > avg_vol
 
+        # VWAP — today's session only
+        vwap     = _calc_vwap(df)
+        vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
+        price_vs_vwap = (
+            "BELOW" if vwap and price < vwap * 0.999 else
+            "ABOVE" if vwap and price > vwap * 1.001 else
+            "AT"
+        ) if vwap else "UNKNOWN"
+
         # Bullish divergence (price/RSI)
         divergence = detect_bullish_divergence(close, rsi_series)
 
@@ -260,7 +297,26 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         if candle_pattern != "neutral":
             reasons.append(f"Candle: {candle_pattern.replace('_', ' ')}")
 
-        score = min(score, 35)
+        # VWAP scoring (0–5 pts)
+        if vwap is not None:
+            if vwap_pct <= -1.0 and volume_surging:
+                score += 5
+                reasons.append(
+                    f"Price {abs(vwap_pct):.1f}% below VWAP ({vwap:,.0f}) + volume surge — capitulation bounce setup"
+                )
+            elif vwap_pct <= -1.0:
+                score += 3
+                reasons.append(f"Price {abs(vwap_pct):.1f}% below VWAP ({vwap:,.0f}) — oversold vs session avg")
+            elif price_vs_vwap == "BELOW":
+                score += 1
+                reasons.append(f"Price slightly below VWAP ({vwap:,.0f})")
+            elif vwap_pct >= 1.0 and volume_surging:
+                score += 3
+                reasons.append(
+                    f"Price {vwap_pct:.1f}% above VWAP ({vwap:,.0f}) + volume surge — momentum continuation"
+                )
+
+        score = min(score, 40)
 
         return {
             "rsi":                  rsi,
@@ -276,6 +332,9 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
             "price":                price,
             "volume_ratio":         volume_ratio,
             "volume_surging":       volume_surging,
+            "vwap":                 vwap,
+            "vwap_pct":             vwap_pct,
+            "price_vs_vwap":        price_vs_vwap,
             "candle_pattern":       candle_pattern,
             "divergence":           divergence,
             "score":                score,
