@@ -2,6 +2,7 @@
 Combines all 4 scoring layers into a single verdict.
 Called by main.py after all layers have been fetched.
 """
+from __future__ import annotations
 
 import config
 

@@ -8,6 +8,7 @@ Session 2 (12:30 WIB): S1 screener  — today's Session 1 intraday (5m) data,
 Both use the same 4 criteria: RSI(14), Volume ratio, MACD(12,26,9), BB(20,2).
 Top 2 qualified candidates are written to Firestore for the scalp scanner.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime

@@ -4,6 +4,7 @@ Full pipeline: 4-layer scoring → AI verdict → Telegram signals + briefings +
 Includes: dynamic watchlist (/add /remove) + whale scanner.
 Run: python main.py
 """
+from __future__ import annotations
 
 import logging
 import sys

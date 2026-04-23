@@ -8,6 +8,7 @@ Approach:
   3. Extrapolate 5 trading days forward
   4. Adjust for RSI mean-reversion if overbought/oversold
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone

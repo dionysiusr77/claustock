@@ -11,6 +11,7 @@ Two separate watchlists:
 Scalping watchlist resets each trading day.
 Entry price is recorded when added; P&L calculated vs closing/current price.
 """
+from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone, date, timedelta

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 import yfinance as yf
 import requests

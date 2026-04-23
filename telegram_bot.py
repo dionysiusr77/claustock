@@ -6,6 +6,7 @@ Handles:
   - Live signal alerts
   - Command polling (/status, /stocks, /briefing, /forecast, /flow, /help)
 """
+from __future__ import annotations
 
 import logging
 import threading

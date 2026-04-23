@@ -7,6 +7,7 @@ Sources:
 Claude Haiku scores headlines 0–20 pts.
 Results are cached in memory per 30 min to avoid hammering Claude API.
 """
+from __future__ import annotations
 
 import json
 import logging

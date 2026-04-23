@@ -3,6 +3,7 @@ Phase 5 — Claude AI verdict.
 Reads all 4 scoring layers and returns a structured trade recommendation.
 Only called when score >= IDX_MIN_SCORE to keep API costs low.
 """
+from __future__ import annotations
 
 import json
 import logging
