@@ -198,15 +198,6 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         # True if today's completed bar beat both yesterday AND 20-bar average
         volume_surging = vol_completed > vol_prev and vol_completed > avg_vol
 
-        # VWAP — today's session only
-        vwap     = _calc_vwap(df)
-        vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
-        price_vs_vwap = (
-            "BELOW" if vwap and price < vwap * 0.999 else
-            "ABOVE" if vwap and price > vwap * 1.001 else
-            "AT"
-        ) if vwap else "UNKNOWN"
-
         # Bullish divergence (price/RSI)
         divergence = detect_bullish_divergence(close, rsi_series)
 
@@ -214,6 +205,15 @@ def calculate_indicators(df: pd.DataFrame) -> dict | None:
         candle_pattern = _detect_candle_pattern(df.iloc[:-1])
 
         price = round(float(close.iloc[-1]), 2)
+
+        # VWAP — today's session only (needs price to be defined first)
+        vwap     = _calc_vwap(df)
+        vwap_pct = round((price - vwap) / vwap * 100, 2) if vwap else None
+        price_vs_vwap = (
+            "BELOW" if vwap and price < vwap * 0.999 else
+            "ABOVE" if vwap and price > vwap * 1.001 else
+            "AT"
+        ) if vwap else "UNKNOWN"
 
         # Derived momentum signals
         rsi_rising    = rsi > rsi_prev                          # RSI turning up
