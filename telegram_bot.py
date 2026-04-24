@@ -549,7 +549,7 @@ class CommandPoller:
         # Allow if sender's user ID or the chat itself is in the allowlist
         allowed = config.TELEGRAM_ALLOWED_USER_IDS
         if allowed and user_id not in allowed and chat_id not in allowed:
-            logger.debug(f"Ignored command from unauthorized user {user_id} in chat {chat_id}")
+            logger.info(f"Blocked: user_id={user_id} chat_id={chat_id} — not in allowlist {allowed}")
             return
 
         text = (msg.get("text") or "").strip()
