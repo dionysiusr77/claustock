@@ -163,7 +163,7 @@ def get_universe(tier: str = config.UNIVERSE) -> list[str]:
 
 # ── Daily OHLCV ───────────────────────────────────────────────────────────────
 
-def fetch_daily(symbol: str, days: int = 365, _log_error: bool = False) -> pd.DataFrame | None:
+def fetch_daily(symbol: str, days: int = 365, min_rows: int = 60) -> pd.DataFrame | None:
     """Single-stock daily OHLCV. Returns None on failure."""
     from_date, to_date = _date_range(days)
     try:
@@ -173,19 +173,16 @@ def fetch_daily(symbol: str, days: int = 365, _log_error: bool = False) -> pd.Da
             to_date=to_date,
         )
         df = _parse_ohlcv(raw)
-        if len(df) < 60:
-            logger.debug("Insufficient OHLCV data for %s (%d rows)", symbol, len(df))
+        if len(df) < min_rows:
+            logger.debug("Insufficient OHLCV data for %s (%d rows, need %d)", symbol, len(df), min_rows)
             return None
         return df
     except Exception as e:
-        if _log_error:
-            logger.warning("fetch_daily error for %s: %s: %s", symbol, type(e).__name__, e)
-        else:
-            logger.debug("fetch_daily failed for %s: %s", symbol, e)
+        logger.debug("fetch_daily failed for %s: %s", symbol, e)
         return None
 
 
-def fetch_daily_batch(symbols: list[str], days: int = 365) -> dict[str, pd.DataFrame]:
+def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -> dict[str, pd.DataFrame]:
     """
     Download daily OHLCV for multiple symbols.
     Sequential — Invezgo doesn't need the concurrent pool workaround.
@@ -195,15 +192,12 @@ def fetch_daily_batch(symbols: list[str], days: int = 365) -> dict[str, pd.DataF
     failed: list[str] = []
     total = len(symbols)
 
-    first_failure_logged = False
     for i, sym in enumerate(symbols, 1):
-        log_err = not first_failure_logged   # surface the very first error
-        df = fetch_daily(sym, days=days, _log_error=log_err)
+        df = fetch_daily(sym, days=days, min_rows=min_rows)
         if df is not None:
             result[sym] = df
         else:
             failed.append(sym)
-            first_failure_logged = True
         if i % 25 == 0:
             logger.info("OHLCV download: %d/%d done", i, total)
 
@@ -399,7 +393,7 @@ def filter_liquid(
         logger.debug("Invezgo screener failed, falling back to OHLCV filter: %s", e)
 
     # ── Fallback: OHLCV-based filter (same as fetcher.filter_liquid) ──────────
-    data = fetch_daily_batch(symbols, days=30)
+    data = fetch_daily_batch(symbols, days=30, min_rows=5)
     liquid: list[str] = []
     for sym, df in data.items():
         if df.empty or len(df) < 5:
