@@ -135,11 +135,15 @@ def _cached_stock_list() -> list[dict]:
         return []
 
 
+def _is_equity(code: str) -> bool:
+    """Filter out warrants (-W), rights (-R), and other non-equity instruments."""
+    return "-" not in code
+
+
 def get_universe(tier: str = config.UNIVERSE) -> list[str]:
     """
-    Returns all BEI-listed tickers in 'XXXX.JK' format.
-    Tier parameter is accepted for API compatibility but Invezgo always
-    returns the full listing — filtering happens in filter_liquid().
+    Returns all BEI-listed equity tickers in 'XXXX.JK' format.
+    Warrants (-W) and rights (-R) are excluded — they have no OHLCV data.
     Falls back to the hardcoded IDX80 universe on failure.
     """
     stocks = _cached_stock_list()
@@ -154,10 +158,10 @@ def get_universe(tier: str = config.UNIVERSE) -> list[str]:
             s.get("code") or s.get("stock_code") or
             s.get("stockCode") or s.get("ticker") or ""
         ).strip().upper()
-        if code:
+        if code and _is_equity(code):
             tickers.append(_jk(code))
 
-    logger.info("Invezgo universe: %d stocks", len(tickers))
+    logger.info("Invezgo universe: %d equities (warrants/rights excluded)", len(tickers))
     return sorted(set(tickers))
 
 
@@ -402,13 +406,23 @@ def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
         logger.debug("get_top_foreign failed for %s: %s", date_str, e)
         return None
 
-    # Response shape: {"accum": [...], "dist": [...]}
-    # accum = stocks where asing is net buying, dist = net selling
+    # Log response shape once to verify field names
+    logger.warning("get_top_foreign raw type=%s keys=%s sample=%s",
+                   type(raw).__name__,
+                   list(raw.keys()) if isinstance(raw, dict) else "n/a",
+                   str(raw)[:300])
+
     if not isinstance(raw, dict):
         return None
 
     accum_rows = raw.get("accum") or []
     dist_rows  = raw.get("dist")  or []
+
+    # Log first row of each to see field names
+    if accum_rows:
+        logger.warning("accum[0] keys: %s", list(accum_rows[0].keys()) if isinstance(accum_rows[0], dict) else accum_rows[0])
+    if dist_rows:
+        logger.warning("dist[0] keys: %s", list(dist_rows[0].keys()) if isinstance(dist_rows[0], dict) else dist_rows[0])
 
     total_buy = total_sell = 0.0
     for row in accum_rows:

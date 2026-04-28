@@ -5,6 +5,7 @@ Starts the Telegram bot with two scheduled jobs:
   08:30 WIB Mon–Fri — Morning briefing delivery
 """
 
+import asyncio
 import datetime
 import logging
 
@@ -36,6 +37,11 @@ def main() -> None:
     logger.info("Starting Claustock IDX v2 (universe=%s)", config.UNIVERSE)
 
     app = build_app()
+
+    # Clear any stale webhook/polling session from a previous instance
+    async def _reset():
+        await app.bot.delete_webhook(drop_pending_updates=True)
+    asyncio.run(_reset())
     jq  = app.job_queue
 
     # ── Scheduled jobs (Mon–Fri only) ─────────────────────────────────────────
@@ -67,7 +73,7 @@ def main() -> None:
         *config.BRIEFING_TIME,
     )
 
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
