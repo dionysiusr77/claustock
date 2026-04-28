@@ -163,7 +163,7 @@ def get_universe(tier: str = config.UNIVERSE) -> list[str]:
 
 # ── Daily OHLCV ───────────────────────────────────────────────────────────────
 
-def fetch_daily(symbol: str, days: int = 365) -> pd.DataFrame | None:
+def fetch_daily(symbol: str, days: int = 365, _log_error: bool = False) -> pd.DataFrame | None:
     """Single-stock daily OHLCV. Returns None on failure."""
     from_date, to_date = _date_range(days)
     try:
@@ -178,7 +178,10 @@ def fetch_daily(symbol: str, days: int = 365) -> pd.DataFrame | None:
             return None
         return df
     except Exception as e:
-        logger.debug("fetch_daily failed for %s: %s", symbol, e)   # batched in caller
+        if _log_error:
+            logger.warning("fetch_daily error for %s: %s: %s", symbol, type(e).__name__, e)
+        else:
+            logger.debug("fetch_daily failed for %s: %s", symbol, e)
         return None
 
 
@@ -192,12 +195,15 @@ def fetch_daily_batch(symbols: list[str], days: int = 365) -> dict[str, pd.DataF
     failed: list[str] = []
     total = len(symbols)
 
+    first_failure_logged = False
     for i, sym in enumerate(symbols, 1):
-        df = fetch_daily(sym, days=days)
+        log_err = not first_failure_logged   # surface the very first error
+        df = fetch_daily(sym, days=days, _log_error=log_err)
         if df is not None:
             result[sym] = df
         else:
             failed.append(sym)
+            first_failure_logged = True
         if i % 25 == 0:
             logger.info("OHLCV download: %d/%d done", i, total)
 
