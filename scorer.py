@@ -468,4 +468,5 @@ def score_stock(
         "bearish_warnings": bearish_warnings,
         "trade_levels":    trade_levels,
         "snapshot":        snap,
+        "foreign":         foreign,   # raw foreign flow dict for briefing prompt
     }

@@ -101,8 +101,8 @@ def _build_user_prompt(scan_data: dict, breadth_summary: dict) -> str:
             "top_reasons":  _top_reasons(r),
             "bearish_warnings": r.get("bearish_warnings", []),
             "foreign": {
-                "direction":         r.get("snapshot", {}).get("_ff_direction"),
-                "consecutive_buy":   r.get("snapshot", {}).get("_ff_consec_buy", 0),
+                "direction":       (r.get("foreign") or {}).get("direction", "NEUTRAL"),
+                "consecutive_buy": (r.get("foreign") or {}).get("consecutive_buy_days", 0),
             },
         })
 
@@ -277,8 +277,12 @@ def format_telegram(
         lines.append(f"<b>━━━ TOP PICKS ({len(picks)}) ━━━</b>")
         lines.append("")
 
-    # Merge Claude narratives with computed trade levels
-    candidates_map = {r["symbol"]: r for r in scan_data.get("candidates", [])}
+    # Merge Claude narratives with computed trade levels.
+    # Claude returns symbols without .JK; candidates use XXXX.JK — index both.
+    candidates_map = {}
+    for r in scan_data.get("candidates", []):
+        candidates_map[r["symbol"]] = r
+        candidates_map[r["symbol"].replace(".JK", "")] = r
 
     for i, pick in enumerate(picks, 1):
         sym    = pick["symbol"]
