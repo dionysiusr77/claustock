@@ -17,12 +17,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     level=logging.INFO,
 )
-# Quiet down noisy libraries
+# Quiet down noisy libraries — keep Railway under 500 logs/sec
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)        # JSONDecodeError on ^JKSE is handled gracefully
-logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)  # pool-full warnings are harmless
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)        # JSONDecodeError on ^JKSE handled gracefully
+logging.getLogger("urllib3").setLevel(logging.ERROR)            # covers connectionpool + retry
 logging.getLogger("peewee").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)         # suppress polling heartbeats
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("invezgo").setLevel(logging.WARNING)          # suppress SDK request traces
 
 logger = logging.getLogger(__name__)
 _WIB   = pytz.timezone(config.MARKET_TZ)

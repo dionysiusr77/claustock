@@ -169,7 +169,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text("🔍 Scan dimulai, tunggu sebentar...")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         scan_data = await loop.run_in_executor(_executor, _run_full_scan)
         briefing_text = await loop.run_in_executor(_executor, _build_briefing, scan_data)
@@ -192,7 +192,7 @@ async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     symbol = raw if raw.endswith(".JK") else f"{raw}.JK"
     await update.message.reply_text(f"🔍 Menganalisa {symbol}...")
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(_executor, _run_single_pick, symbol)
         if result is None:
@@ -292,7 +292,7 @@ def _format_single_pick(result: dict) -> str:
 async def job_eod_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Nightly D-1 scan at 16:30 WIB."""
     logger.info("EOD scan job triggered")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         scan_data     = await loop.run_in_executor(_executor, _run_full_scan)
         briefing_text = await loop.run_in_executor(_executor, _build_briefing, scan_data)
@@ -310,7 +310,7 @@ async def job_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
         await broadcast(context.bot, text)
     else:
         logger.warning("No saved briefing found — triggering fresh scan")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             scan_data     = await loop.run_in_executor(_executor, _run_full_scan)
             briefing_text = await loop.run_in_executor(_executor, _build_briefing, scan_data)

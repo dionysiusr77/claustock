@@ -117,7 +117,7 @@ def run_scan(universe_tier: str = config.UNIVERSE) -> dict:
 
     # ── Step 3: Batch OHLCV (1 year daily) ───────────────────────────────────
     logger.info("Downloading 1y OHLCV for %d liquid stocks...", len(liquid_symbols))
-    ohlcv_map = fetch_daily_batch(liquid_symbols, period="1y")
+    ohlcv_map = fetch_daily_batch(liquid_symbols, days=365)
 
     # ── Step 4: Market breadth ────────────────────────────────────────────────
     breadth       = fetch_market_breadth()

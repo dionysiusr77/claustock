@@ -184,9 +184,11 @@ def _rule_based_briefing(scan_data: dict, breadth_summary: dict) -> dict:
         picks.append({
             "symbol":        r["symbol"],
             "setup":         r["setup"],
-            "narrative":     f"Skor {r['total_score']}/100. Setup: {r['setup']}. "
-                             f"RSI {r['snapshot'].get('rsi', '—'):.1f}. "
-                             f"Volume ratio {r['snapshot'].get('vol_ratio', 0):.1f}×.",
+            "narrative":     (
+                                 f"Skor {r['total_score']}/100. Setup: {r['setup']}. "
+                                 + (f"RSI {r['snapshot']['rsi']:.1f}. " if r['snapshot'].get('rsi') is not None else "")
+                                 + f"Volume ratio {r['snapshot'].get('vol_ratio') or 0:.1f}×."
+                             ),
             "hold_duration": "1-2 hari",
             "key_risk":      "Level invalidasi di bawah stop loss.",
         })

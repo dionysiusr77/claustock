@@ -167,7 +167,7 @@ def fetch_daily(symbol: str, days: int = 365) -> pd.DataFrame | None:
     """Single-stock daily OHLCV. Returns None on failure."""
     from_date, to_date = _date_range(days)
     try:
-        raw = _get_client().analysis.get_chart_stock(
+        raw = _get_client().analysis.get_chart(
             code=_code(symbol),
             from_date=from_date,
             to_date=to_date,
@@ -178,7 +178,7 @@ def fetch_daily(symbol: str, days: int = 365) -> pd.DataFrame | None:
             return None
         return df
     except Exception as e:
-        logger.warning("fetch_daily failed for %s: %s", symbol, e)
+        logger.debug("fetch_daily failed for %s: %s", symbol, e)   # batched in caller
         return None
 
 
@@ -189,71 +189,35 @@ def fetch_daily_batch(symbols: list[str], days: int = 365) -> dict[str, pd.DataF
     Returns {symbol: DataFrame}.
     """
     result: dict[str, pd.DataFrame] = {}
+    failed: list[str] = []
     total = len(symbols)
+
     for i, sym in enumerate(symbols, 1):
         df = fetch_daily(sym, days=days)
         if df is not None:
             result[sym] = df
-        if i % 20 == 0:
-            logger.info("OHLCV progress: %d/%d", i, total)
-    logger.info("fetch_daily_batch: %d/%d symbols OK", len(result), total)
+        else:
+            failed.append(sym)
+        if i % 25 == 0:
+            logger.info("OHLCV download: %d/%d done", i, total)
+
+    ok = len(result)
+    if failed:
+        logger.warning("fetch_daily_batch: %d/%d failed — %s", len(failed), total,
+                       ", ".join(failed[:5]) + (" ..." if len(failed) > 5 else ""))
+    logger.info("fetch_daily_batch complete: %d/%d symbols OK", ok, total)
     return result
 
 
 # ── Market breadth (IHSG + sectors) ──────────────────────────────────────────
 
-# Map our internal names → Invezgo index codes
-_INDEX_MAP = {
-    "IHSG":        "COMPOSITE",
-    "LQ45":        "LQ45",
-    "Finance":     "IDX-FINANCE",
-    "Consumer":    "IDX-CONSUMER",
-    "Mining":      "IDX-MINING",
-    "Infra":       "IDX-INFRASTRUCTURE",
-    "Property":    "IDX-PROPERTY",
-    "Manufacture": "IDX-MANUFACTURE",
-    "Trade":       "IDX-TRADE",
-    "Agri":        "IDX-AGRICULTURE",
-    "Misc Ind":    "IDX-MISC-IND",
-    "Basic Ind":   "IDX-BASIC-IND",
-}
-
-
 def fetch_market_breadth() -> dict:
     """
     Fetch yesterday's close + change% for IHSG and sectoral indices.
-    Returns same format as fetcher.fetch_market_breadth().
+    Invezgo SDK has no index chart method — delegates to yfinance fetcher.
     """
-    from_date, to_date = _date_range(5)
-    out: dict = {}
-
-    for name, idx_code in _INDEX_MAP.items():
-        try:
-            raw = _get_client().analysis.get_chart_index(
-                code=idx_code,
-                from_date=from_date,
-                to_date=to_date,
-            )
-            df = _parse_ohlcv(raw)
-            if df.empty or len(df) < 2:
-                continue
-            prev_close = float(df["close"].iloc[-2])
-            last_close = float(df["close"].iloc[-1])
-            change_pct = (last_close - prev_close) / prev_close * 100
-            out[name] = {
-                "close":      round(last_close, 2),
-                "change_pct": round(change_pct, 2),
-                "direction":  "UP" if change_pct > 0 else ("DOWN" if change_pct < 0 else "FLAT"),
-            }
-        except Exception as e:
-            logger.debug("breadth fetch failed for %s (%s): %s", name, idx_code, e)
-
-    if not out:
-        logger.warning("fetch_market_breadth: no data — falling back to yfinance")
-        from fetcher import fetch_market_breadth as _yf_breadth
-        return _yf_breadth()
-
-    return out
+    from fetcher import fetch_market_breadth as _yf_breadth
+    return _yf_breadth()
 
 
 # ── Per-stock foreign flow ─────────────────────────────────────────────────────
@@ -365,19 +329,21 @@ def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
         logger.debug("get_top_foreign failed for %s: %s", date_str, e)
         return None
 
-    rows = raw
-    if isinstance(raw, dict):
-        rows = raw.get("data") or raw.get("items") or []
-
-    if not rows:
+    # Response shape: {"accum": [...], "dist": [...]}
+    # accum = stocks where asing is net buying, dist = net selling
+    if not isinstance(raw, dict):
         return None
 
+    accum_rows = raw.get("accum") or []
+    dist_rows  = raw.get("dist")  or []
+
     total_buy = total_sell = 0.0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        total_buy  += float(row.get("foreignBuy")  or row.get("foreign_buy")  or 0)
-        total_sell += float(row.get("foreignSell") or row.get("foreign_sell") or 0)
+    for row in accum_rows:
+        if isinstance(row, dict):
+            total_buy += float(row.get("foreignBuy") or row.get("netVal") or 0)
+    for row in dist_rows:
+        if isinstance(row, dict):
+            total_sell += float(row.get("foreignSell") or row.get("netVal") or 0)
 
     net = total_buy - total_sell
     return {
