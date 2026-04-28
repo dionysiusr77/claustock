@@ -86,6 +86,7 @@ UNIVERSE = os.getenv("UNIVERSE", "IDX80")   # LQ45 | IDX80 | COMPOSITE
 
 # ── Credentials ───────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
+INVEZGO_API_KEY    = os.getenv("INVEZGO_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_IDS  = [
     cid.strip()

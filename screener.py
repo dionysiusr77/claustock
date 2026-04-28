@@ -18,16 +18,16 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
-from fetcher import (
+from invezgo_client import (
     fetch_daily_batch,
     fetch_foreign_flow_market,
+    fetch_foreign_flow_stock,
     fetch_market_breadth,
     filter_liquid,
+    get_universe,
 )
-from foreign_flow import get_foreign_flow_enriched
 from indicators import compute_all, latest_snapshot
 from scorer import score_stock
-from universe import get_universe
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _fetch_ff_batch(symbols: list[str], max_workers: int = 4) -> dict[str, dict 
     """Fetch multi-day foreign flow (with consecutive streaks) concurrently."""
     results: dict[str, dict | None] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_map = {pool.submit(get_foreign_flow_enriched, sym): sym for sym in symbols}
+        future_map = {pool.submit(fetch_foreign_flow_stock, sym): sym for sym in symbols}
         for future in as_completed(future_map):
             sym = future_map[future]
             try:
@@ -200,9 +200,9 @@ def scan_single(symbol: str) -> dict | None:
     Score a single stock on demand (used by /pick Telegram command).
     Returns the score_stock result dict or None on failure.
     """
-    from fetcher import fetch_daily, fetch_foreign_flow_stock, fetch_market_breadth
+    from invezgo_client import fetch_daily, fetch_foreign_flow_stock, fetch_market_breadth
 
-    df = fetch_daily(symbol, period="1y")
+    df = fetch_daily(symbol, days=365)
     if df is None or df.empty:
         logger.warning("scan_single: no data for %s", symbol)
         return None
