@@ -226,8 +226,14 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
 
     ok = len(result)
     if failed:
-        logger.warning("fetch_daily_batch: %d/%d failed — %s", len(failed), total,
-                       ", ".join(failed[:5]) + (" ..." if len(failed) > 5 else ""))
+        fail_rate = len(failed) / total if total else 0
+        msg = "fetch_daily_batch: %d/%d no data — %s"
+        args = (len(failed), total, ", ".join(failed[:5]) + (" ..." if len(failed) > 5 else ""))
+        # Only warn if >30% fail — likely an API issue; otherwise it's normal (new/suspended stocks)
+        if fail_rate > 0.30:
+            logger.warning(msg, *args)
+        else:
+            logger.debug(msg, *args)
     logger.info("fetch_daily_batch complete: %d/%d symbols OK", ok, total)
     return result
 
@@ -403,7 +409,7 @@ def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
     try:
         raw = _get_client().analysis.get_top_foreign(date=date_str)
     except Exception as e:
-        logger.debug("get_top_foreign failed for %s: %s", date_str, e)
+        logger.warning("get_top_foreign failed for %s: %s: %s", date_str, type(e).__name__, e)
         return None
 
     # Log response shape once to verify field names
