@@ -78,6 +78,15 @@ def _split_message(text: str, limit: int) -> list[str]:
     return chunks
 
 
+async def _reply_long(update: Update, text: str, parse_mode: str = ParseMode.HTML) -> None:
+    """reply_text with automatic splitting for messages > 4096 chars."""
+    if len(text) <= 4096:
+        await update.message.reply_text(text, parse_mode=parse_mode)
+    else:
+        for chunk in _split_message(text, 4000):
+            await update.message.reply_text(chunk, parse_mode=parse_mode)
+
+
 # ── Market hours helper ───────────────────────────────────────────────────────
 
 def _market_status() -> str:
@@ -155,7 +164,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     text = load_latest_briefing()
 
     if text:
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await _reply_long(update, text)
     else:
         await update.message.reply_text(
             "Belum ada briefing hari ini. Gunakan /scan untuk generate baru."
@@ -173,7 +182,7 @@ async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         scan_data = await loop.run_in_executor(_executor, _run_full_scan)
         briefing_text = await loop.run_in_executor(_executor, _build_briefing, scan_data)
-        await update.message.reply_text(briefing_text, parse_mode=ParseMode.HTML)
+        await _reply_long(update, briefing_text)
     except Exception as e:
         logger.exception("cmd_scan error")
         await update.message.reply_text(f"❌ Scan gagal: {e}")
@@ -198,10 +207,7 @@ async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if result is None:
             await update.message.reply_text(f"❌ Tidak ada data untuk {symbol}")
             return
-        await update.message.reply_text(
-            _format_single_pick(result),
-            parse_mode=ParseMode.HTML,
-        )
+        await _reply_long(update, _format_single_pick(result))
     except Exception as e:
         logger.exception("cmd_pick error for %s", symbol)
         await update.message.reply_text(f"❌ Error: {e}")
