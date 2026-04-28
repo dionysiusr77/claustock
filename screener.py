@@ -182,6 +182,7 @@ def run_scan(universe_tier: str = config.UNIVERSE) -> dict:
 
     return {
         "candidates":     candidates,
+        "all_scored":     all_scored,   # used for A/D breadth calculation
         "market":         breadth,
         "foreign_market": foreign_mkt,
         "stats": {

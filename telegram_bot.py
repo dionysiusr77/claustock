@@ -221,7 +221,7 @@ def _build_briefing(scan_data: dict) -> str:
 
     breadth_summary = build_breadth_summary(
         scan_data.get("market", {}),
-        scan_data.get("candidates", []),
+        scan_data.get("all_scored") or scan_data.get("candidates", []),
         scan_data.get("foreign_market"),
     )
     text = build_briefing(scan_data, breadth_summary)

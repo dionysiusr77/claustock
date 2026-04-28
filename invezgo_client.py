@@ -214,10 +214,37 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
 def fetch_market_breadth() -> dict:
     """
     Fetch yesterday's close + change% for IHSG and sectoral indices.
-    Invezgo SDK has no index chart method — delegates to yfinance fetcher.
+    Uses yfinance batch for sectors; if ^JKSE fails in the batch (common),
+    falls back to the retry-enabled _fetch_ihsg() helper.
     """
     from fetcher import fetch_market_breadth as _yf_breadth
-    return _yf_breadth()
+    result = _yf_breadth()
+
+    # ^JKSE often fails in the batch download — retry it individually
+    if not result.get("IHSG", {}).get("close"):
+        from market_breadth import _fetch_ihsg
+        df = _fetch_ihsg("5d")
+        if not df.empty and len(df) >= 2:
+            try:
+                df.columns = [c.lower() for c in df.columns]
+                df = df.dropna(subset=["close"])
+                if len(df) >= 2:
+                    prev  = float(df["close"].iloc[-2])
+                    last  = float(df["close"].iloc[-1])
+                    chg   = (last - prev) / prev * 100
+                    result["IHSG"] = {
+                        "close":      round(last, 2),
+                        "change_pct": round(chg, 2),
+                        "direction":  "UP" if chg > 0 else ("DOWN" if chg < 0 else "FLAT"),
+                    }
+                    logger.info("IHSG fallback fetch OK: %.2f (%.2f%%)", last, chg)
+            except Exception as e:
+                logger.warning("IHSG fallback parse failed: %s", e)
+
+    if not result.get("IHSG", {}).get("close"):
+        logger.warning("IHSG data unavailable — market breadth header will show None")
+
+    return result
 
 
 # ── Per-stock foreign flow ─────────────────────────────────────────────────────
