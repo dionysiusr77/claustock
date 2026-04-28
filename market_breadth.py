@@ -33,13 +33,30 @@ _FG_LABELS = [
 
 # ── Fear / Greed ──────────────────────────────────────────────────────────────
 
+def _fetch_ihsg(period: str) -> "pd.DataFrame":
+    """
+    Download IHSG daily OHLCV. Tries ^JKSE; falls back to ^JKSE with shorter
+    period on JSONDecodeError (known yfinance intermittent failure on index tickers).
+    Returns empty DataFrame on total failure — callers must check .empty.
+    """
+    fallback_periods = {"3mo": "1mo", "1mo": "5d"}
+    for attempt_period in [period, fallback_periods.get(period, "5d")]:
+        try:
+            df = yf.download(
+                IHSG_TICKER, period=attempt_period, interval="1d",
+                auto_adjust=True, progress=False,
+            )
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+
 def _compute_ihsg_rsi(period: int = 14) -> float | None:
     """Compute IHSG RSI using the last (period+10) daily candles."""
     try:
-        df = yf.download(
-            IHSG_TICKER, period="3mo", interval="1d",
-            auto_adjust=True, progress=False,
-        )
+        df = _fetch_ihsg("3mo")
         if df.empty or len(df) < period + 2:
             return None
         close  = df["Close"].dropna()
@@ -59,10 +76,7 @@ def _compute_ihsg_rsi(period: int = 14) -> float | None:
 def _compute_ihsg_momentum(lookback: int = 5) -> float | None:
     """% change of IHSG over last `lookback` trading days."""
     try:
-        df = yf.download(
-            IHSG_TICKER, period="1mo", interval="1d",
-            auto_adjust=True, progress=False,
-        )
+        df = _fetch_ihsg("1mo")
         if df.empty or len(df) < lookback + 1:
             return None
         close = df["Close"].dropna()
