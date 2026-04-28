@@ -9,6 +9,7 @@ Design:
   - Falls back to a rule-based briefing if the API call fails
 """
 
+import html
 import json
 import logging
 from datetime import datetime
@@ -257,7 +258,7 @@ def format_telegram(
         f"A/D: {breadth_summary.get('advance','—')}/{breadth_summary.get('decline','—')} | "
         f"Sentimen: {fg_emoji} {sentiment}",
         "",
-        briefing.get("market_header", ""),
+        html.escape(briefing.get("market_header", "")),
         "",
     ]
 
@@ -302,13 +303,13 @@ def format_telegram(
 
         lines += [
             f"<b>{i}. {sym}</b> — {emoji} {setup}  <i>(skor {score})</i>",
-            f"   {pick.get('narrative', '')}",
+            f"   {html.escape(pick.get('narrative', ''))}",
             f"   <code>Entry  : {entry:,.0f}</code>" if isinstance(entry, (int, float)) else f"   Entry  : {entry}",
             f"   <code>Target : {target:,.0f} (+{t_pct}%)</code>" if isinstance(target, (int, float)) else f"   Target : {target}",
             f"   <code>Inv    : {sl:,.0f} (-{sl_pct}%)  R:R {rr}</code>" if isinstance(sl, (int, float)) else f"   Inv    : {sl}",
-            f"   Hold: <i>{pick.get('hold_duration', '—')}</i>"
+            f"   Hold: <i>{html.escape(str(pick.get('hold_duration', '—')))}</i>"
             + (f" | RSI {rsi:.1f}" if rsi else ""),
-            f"   ⚠️ <i>{pick.get('key_risk', '')}</i>",
+            f"   ⚠️ <i>{html.escape(pick.get('key_risk', ''))}</i>",
             "",
         ]
 
@@ -317,7 +318,7 @@ def format_telegram(
     if watchlist:
         lines.append("<b>━━━ WATCHLIST ━━━</b>")
         for w in watchlist:
-            lines.append(f"• <b>{w['symbol']}</b> — {w['note']}")
+            lines.append(f"• <b>{html.escape(w['symbol'])}</b> — {html.escape(w.get('note', ''))}")
         lines.append("")
 
     # ── Risks ─────────────────────────────────────────────────────────────────
@@ -325,7 +326,7 @@ def format_telegram(
     if risks:
         lines.append("<b>⚠️ RISIKO HARI INI</b>")
         for r in risks:
-            lines.append(f"• {r}")
+            lines.append(f"• {html.escape(r)}")
         lines.append("")
 
     # ── Footer ────────────────────────────────────────────────────────────────
