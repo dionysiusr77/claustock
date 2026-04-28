@@ -21,10 +21,10 @@ import config
 from fetcher import (
     fetch_daily_batch,
     fetch_foreign_flow_market,
-    fetch_foreign_flow_stock,
     fetch_market_breadth,
     filter_liquid,
 )
+from foreign_flow import get_foreign_flow_enriched
 from indicators import compute_all, latest_snapshot
 from scorer import score_stock
 from universe import get_universe
@@ -57,10 +57,10 @@ def _guess_sector(symbol: str) -> str | None:
 
 
 def _fetch_ff_batch(symbols: list[str], max_workers: int = 8) -> dict[str, dict | None]:
-    """Fetch foreign flow for multiple stocks concurrently."""
+    """Fetch multi-day foreign flow (with consecutive streaks) concurrently."""
     results: dict[str, dict | None] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_map = {pool.submit(fetch_foreign_flow_stock, sym): sym for sym in symbols}
+        future_map = {pool.submit(get_foreign_flow_enriched, sym): sym for sym in symbols}
         for future in as_completed(future_map):
             sym = future_map[future]
             try:
