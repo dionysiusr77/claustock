@@ -56,7 +56,7 @@ def _guess_sector(symbol: str) -> str | None:
     return _SECTOR_MAP.get(code[:2])
 
 
-def _fetch_ff_batch(symbols: list[str], max_workers: int = 8) -> dict[str, dict | None]:
+def _fetch_ff_batch(symbols: list[str], max_workers: int = 4) -> dict[str, dict | None]:
     """Fetch multi-day foreign flow (with consecutive streaks) concurrently."""
     results: dict[str, dict | None] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:

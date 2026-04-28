@@ -220,7 +220,8 @@ def build_breadth_summary(
             break
 
     fm_dir = foreign_market.get("direction", "NEUTRAL") if foreign_market else "N/A"
-    fm_net = foreign_market.get("net_val_idr", 0) or 0
+    fm_net = foreign_market.get("net_val_idr", 0) if foreign_market else 0
+    fm_net = fm_net or 0
 
     return {
         "ihsg_close":       ihsg.get("close"),

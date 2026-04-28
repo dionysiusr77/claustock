@@ -19,7 +19,8 @@ logging.basicConfig(
 )
 # Quiet down noisy libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)   # JSONDecodeError on ^JKSE is handled gracefully
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)        # JSONDecodeError on ^JKSE is handled gracefully
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)  # pool-full warnings are harmless
 logging.getLogger("peewee").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
 
