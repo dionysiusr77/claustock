@@ -326,10 +326,29 @@ async def job_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
             await broadcast(context.bot, "⚠️ Morning briefing gagal dibuat. Cek log.")
 
 
+# ── Startup notification ──────────────────────────────────────────────────────
+
+async def _on_startup(app: Application) -> None:
+    now = datetime.now(_WIB).strftime("%d %b %Y %H:%M WIB")
+    text = (
+        f"🟢 <b>Claustock IDX v2 online</b>\n"
+        f"<i>{now}</i>\n\n"
+        f"Universe: {config.UNIVERSE} | Min score: {config.MIN_SCORE}\n"
+        f"EOD scan: {config.EOD_SCAN_TIME[0]:02d}:{config.EOD_SCAN_TIME[1]:02d} WIB | "
+        f"Briefing: {config.BRIEFING_TIME[0]:02d}:{config.BRIEFING_TIME[1]:02d} WIB"
+    )
+    await broadcast(app.bot, text)
+
+
 # ── App builder ───────────────────────────────────────────────────────────────
 
 def build_app() -> Application:
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(config.TELEGRAM_BOT_TOKEN)
+        .post_init(_on_startup)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("help",     cmd_help))
