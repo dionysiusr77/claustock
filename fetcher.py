@@ -1,274 +1,262 @@
-from __future__ import annotations
-import time
-import yfinance as yf
-import requests
-import pandas as pd
-from datetime import datetime, timedelta
+"""
+Market data fetcher.
+  - Daily OHLCV via yfinance (batch + single)
+  - IHSG + sectoral indices
+  - IDX foreign net flow per stock
+"""
+
 import logging
+from datetime import datetime, timedelta
+
+import pandas as pd
+import requests
+import yfinance as yf
+
+import config
 
 logger = logging.getLogger(__name__)
 
-# Silence yfinance's own JSONDecodeError noise — we handle failures ourselves
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-logging.getLogger("peewee").setLevel(logging.CRITICAL)
-
-# ── Persistent HTTP session for all IDX API calls ─────────────────────────────
-# Establishes a browser-like cookie context to avoid 403s on Railway (GCP IPs).
-_IDX_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept":          "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-    "Referer":         "https://www.idx.co.id/",
-    "Origin":          "https://www.idx.co.id",
+# ── Sectoral index tickers ────────────────────────────────────────────────────
+SECTOR_TICKERS = {
+    "IHSG":        "^JKSE",
+    "LQ45":        "^JKLQ45",
+    "Finance":     "^JKFIN",
+    "Consumer":    "^JKCONS",
+    "Mining":      "^JKMING",
+    "Infra":       "^JKINFA",
+    "Property":    "^JKPROP",
+    "Manufacture": "^JKMNFG",
+    "Trade":       "^JKTRAD",
+    "Agri":        "^JKAGRI",
+    "Misc Ind":    "^JKMISC",
+    "Basic Ind":   "^JKBIND",
 }
 
-SESSION = requests.Session()
-SESSION.headers.update(_IDX_HEADERS)
+# ── Daily OHLCV ───────────────────────────────────────────────────────────────
 
-def _ensure_idx_cookie():
-    """Establish a session cookie with idx.co.id so API calls are not rejected."""
-    try:
-        SESSION.get("https://www.idx.co.id/", timeout=10)
-    except Exception as e:
-        logger.warning(f"_ensure_idx_cookie: {e}")
-
-# Establish cookie at import time (non-fatal if it fails)
-try:
-    _ensure_idx_cookie()
-except Exception:
-    pass
-
-# ── In-memory cache for consecutive-days calculation ──────────────────────────
-# { stock_code: (result: int, expires: datetime) }
-_flow_cache: dict[str, tuple[int, datetime]] = {}
-_FLOW_CACHE_TTL_HOURS = 1
-
-
-def fetch_candles(symbol: str, interval: str = "5m", period: str = "1d") -> pd.DataFrame | None:
-    """
-    Fetch OHLCV candles for a .JK stock.
-    Returns DataFrame with lowercase columns: open, high, low, close, volume.
-    symbol:   e.g. "BBCA.JK"
-    interval: "5m" for live, "1d" for Prophet training
-    period:   "1d" for intraday, "1y" for Prophet
-    """
-    retries = 3
-    df = None
-    for attempt in range(1, retries + 1):
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period=period, interval=interval, auto_adjust=True)
-            if df is not None and not df.empty:
-                break  # success
-            if attempt < retries:
-                logger.warning(f"No candle data for {symbol} (attempt {attempt}/{retries}), retrying...")
-                time.sleep(2 ** attempt)
-            else:
-                logger.warning(f"No candle data for {symbol} after {retries} attempts")
-                return None
-        except Exception as e:
-            if attempt < retries:
-                logger.warning(f"fetch_candles({symbol}) attempt {attempt}/{retries} failed: {e}, retrying...")
-                time.sleep(2 ** attempt)
-            else:
-                logger.error(f"fetch_candles({symbol}) failed after {retries} attempts: {e}")
-                return None
-
-    if df is None or df.empty:
-        return None
-
+def _normalise_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Lowercase columns, drop all-NaN rows, ensure standard OHLCV names."""
+    df = df.copy()
     df.columns = [c.lower() for c in df.columns]
-    df.index.name = "datetime"
-    return df
+    df = df.dropna(how="all")
+    required = {"open", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        return pd.DataFrame()
+    return df[["open", "high", "low", "close", "volume"]]
 
 
-def fetch_daily_candles(symbol: str, period: str = "30d") -> pd.DataFrame | None:
+def fetch_daily_batch(symbols: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:
     """
-    Fetch daily OHLCV candles for D-1 screening.
-    period="30d" is the default; pass "60d" for enough history for MACD(26).
-    Most recent row = yesterday's finalized close (D-1).
+    Batch download daily OHLCV for multiple symbols.
+    Returns {symbol: DataFrame} — missing or broken symbols are silently skipped.
     """
-    return fetch_candles(symbol, interval="1d", period=period)
-
-
-def fetch_quote(symbol: str) -> dict | None:
-    """
-    Fetch live quote for a single stock.
-    Returns: { price, change_pct, high, low, volume, market_cap }
-    """
-    try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
-
-        price = getattr(info, "last_price", None)
-        prev_close = getattr(info, "previous_close", None)
-        change_pct = ((price - prev_close) / prev_close * 100) if price and prev_close else 0.0
-
-        return {
-            "price":      round(price, 2) if price else None,
-            "change_pct": round(change_pct, 2),
-            "high":       getattr(info, "day_high", None),
-            "low":        getattr(info, "day_low", None),
-            "volume":     getattr(info, "three_month_average_volume", None),
-            "market_cap": getattr(info, "market_cap", None),
-        }
-    except Exception as e:
-        logger.error(f"fetch_quote({symbol}): {e}")
-        return None
-
-
-def fetch_foreign_flow(symbol: str) -> dict | None:
-    """
-    Fetch today's foreign net buy/sell for a stock from IDX.
-    Returns: { net_foreign_buy_idr, foreign_buy_vol, foreign_sell_vol, days_consecutive }
-    days_consecutive: positive = consecutive net-buy days, negative = net-sell days
-    """
-    # Strip .JK suffix for IDX API
-    stock_code = symbol.replace(".JK", "")
-    today = datetime.now().strftime("%Y-%m-%d")
+    if not symbols:
+        return {}
 
     try:
-        url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetBrokerSummary"
-        params = {"stockCode": stock_code, "tradingDate": today}
-        resp = SESSION.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-
-        foreign_buy  = data.get("foreignBuyVal", 0) or 0
-        foreign_sell = data.get("foreignSellVal", 0) or 0
-        net          = data.get("foreignNetVal", foreign_buy - foreign_sell)
-
-        # Calculate consecutive days (last 5 trading days)
-        days_consecutive = _calc_consecutive_days(stock_code)
-
-        score, reasons = _score_foreign_flow(net, days_consecutive)
-
-        return {
-            "net_foreign_buy_idr":  net,
-            "foreign_buy_vol":      data.get("foreignBuyVol", 0),
-            "foreign_sell_vol":     data.get("foreignSellVol", 0),
-            "days_consecutive":     days_consecutive,
-            "foreign_score":        score,
-            "reasons":              reasons,
-        }
+        raw = yf.download(
+            tickers=symbols,
+            period=period,
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
     except Exception as e:
-        logger.error(f"fetch_foreign_flow({symbol}): {e}")
-        return None
+        logger.error("yfinance batch download failed: %s", e)
+        return {}
 
+    result: dict[str, pd.DataFrame] = {}
 
-def _score_foreign_flow(net_idr: float, days_consecutive: int) -> tuple[int, list[str]]:
-    """
-    Score foreign flow 0–20 pts.
-    days_consecutive >= +3  → 20 pts (strong bullish)
-    days_consecutive == +2  → 15 pts
-    days_consecutive == +1  → 10 pts
-    net == 0 / no data      →  5 pts
-    days_consecutive negative → 0 pts
-    """
-    reasons = []
-    net_b = round(net_idr / 1_000_000_000, 2) if net_idr else 0  # in billions IDR
-
-    if days_consecutive >= 3:
-        score = 20
-        reasons.append(f"Foreign net BUY {days_consecutive}d in a row (+{net_b:.1f}B IDR)")
-    elif days_consecutive == 2:
-        score = 15
-        reasons.append(f"Foreign net BUY 2d in a row (+{net_b:.1f}B IDR)")
-    elif days_consecutive == 1:
-        score = 10
-        reasons.append(f"Foreign net BUY today (+{net_b:.1f}B IDR)")
-    elif days_consecutive == 0:
-        score = 5
-        reasons.append("Foreign flow neutral")
-    else:
-        score = 0
-        reasons.append(f"Foreign net SELL {abs(days_consecutive)}d in a row ({net_b:.1f}B IDR)")
-
-    return score, reasons
-
-
-def _calc_consecutive_days(stock_code: str, lookback: int = 5) -> int:
-    """
-    Check last `lookback` trading days and return how many consecutive
-    days foreigners have been net buyers (positive) or net sellers (negative).
-    Results are cached for 1 hour to avoid 5 HTTP calls per stock per scan.
-    """
-    # Check cache
-    cached = _flow_cache.get(stock_code)
-    if cached is not None:
-        result, expires = cached
-        if datetime.now() < expires:
-            return result
-
-    net_vals = []
-    for i in range(1, lookback + 1):
-        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+    for sym in symbols:
         try:
-            url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetBrokerSummary"
-            resp = SESSION.get(
-                url,
-                params={"stockCode": stock_code, "tradingDate": date},
-                timeout=8,
-            )
-            data = resp.json()
-            net_vals.append(data.get("foreignNetVal", 0) or 0)
-        except Exception:
-            break
-
-    if not net_vals:
-        result = 0
-    else:
-        direction = 1 if net_vals[0] >= 0 else -1
-        count = 0
-        for val in net_vals:
-            if (val >= 0 and direction == 1) or (val < 0 and direction == -1):
-                count += 1
+            if len(symbols) == 1:
+                df = raw.copy()
             else:
-                break
-        result = count * direction
+                df = raw[sym].copy()
+            df = _normalise_df(df)
+            if len(df) >= 60:          # need at least 60 days for indicators
+                result[sym] = df
+        except Exception:
+            continue
 
-    # Store in cache with 1-hour TTL
-    _flow_cache[stock_code] = (result, datetime.now() + timedelta(hours=_FLOW_CACHE_TTL_HOURS))
+    logger.info("batch download: %d/%d symbols OK", len(result), len(symbols))
     return result
 
 
-def fetch_jci_summary() -> dict | None:
+def fetch_daily(symbol: str, period: str = "1y") -> pd.DataFrame | None:
+    """Single-symbol daily OHLCV. Returns None on failure."""
+    result = fetch_daily_batch([symbol], period=period)
+    return result.get(symbol)
+
+
+# ── IHSG + sector indices ─────────────────────────────────────────────────────
+
+def fetch_market_breadth() -> dict:
     """
-    Fetch JCI (Composite Index ^JKSE) daily summary.
-    Returns: { jci_close, jci_change_pct, total_foreign_net_idr, market_status }
+    Fetch yesterday's IHSG close, change%, and all sectoral index changes.
+    Returns dict ready for the briefing header.
     """
+    tickers = list(SECTOR_TICKERS.values())
     try:
-        jci = yf.Ticker("^JKSE")
-        info = jci.fast_info
+        raw = yf.download(
+            tickers=tickers,
+            period="5d",
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            progress=False,
+        )
+    except Exception as e:
+        logger.error("sector index download failed: %s", e)
+        return {}
 
-        price     = getattr(info, "last_price", None)
-        prev      = getattr(info, "previous_close", None)
-        chg_pct   = ((price - prev) / prev * 100) if price and prev else 0.0
-
-        # Market-wide foreign flow from IDX
-        foreign_net = None
+    out: dict = {}
+    for name, ticker in SECTOR_TICKERS.items():
         try:
-            url = "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetForeignFlow"
-            resp = SESSION.get(url, timeout=10)
-            fdata = resp.json()
-            # IDX returns list; take the most recent entry
-            if isinstance(fdata, list) and fdata:
-                foreign_net = fdata[0].get("foreignNetVal", None)
-            elif isinstance(fdata, dict):
-                foreign_net = fdata.get("foreignNetVal", None)
+            if len(tickers) == 1:
+                df = raw.copy()
+            else:
+                df = raw[ticker].dropna(how="all")
+            df.columns = [c.lower() for c in df.columns]
+            df = df.dropna(subset=["close"])
+            if len(df) < 2:
+                continue
+            prev_close = df["close"].iloc[-2]
+            last_close = df["close"].iloc[-1]
+            change_pct = (last_close - prev_close) / prev_close * 100
+            out[name] = {
+                "close":      round(last_close, 2),
+                "change_pct": round(change_pct, 2),
+                "direction":  "UP" if change_pct > 0 else ("DOWN" if change_pct < 0 else "FLAT"),
+            }
         except Exception:
-            pass
+            continue
+
+    return out
+
+
+# ── IDX foreign flow ──────────────────────────────────────────────────────────
+
+_IDX_BROKER_URL = (
+    "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetBrokerSummary"
+)
+_IDX_FOREIGN_URL = (
+    "https://www.idx.co.id/umbraco/Surface/TradingSummary/GetForeignFlow"
+)
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Referer":    "https://www.idx.co.id/",
+}
+
+
+def _trading_date_str(offset_days: int = 0) -> str:
+    """Return trading date string YYYY-MM-DD, skipping weekends."""
+    dt = datetime.now()
+    dt -= timedelta(days=offset_days)
+    while dt.weekday() >= 5:          # skip Sat/Sun
+        dt -= timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
+
+
+def fetch_foreign_flow_stock(symbol: str, date_str: str | None = None) -> dict | None:
+    """
+    Fetch per-stock foreign net buy/sell from IDX broker summary.
+    symbol: e.g. "BBCA.JK" or "BBCA"
+    Returns: {net_val_idr, buy_val_idr, sell_val_idr, net_lot, date} or None.
+    """
+    code = symbol.replace(".JK", "").upper()
+    date_str = date_str or _trading_date_str(1)   # default: yesterday
+
+    params = {"stockCode": code, "tradingDate": date_str}
+    try:
+        resp = requests.get(
+            _IDX_BROKER_URL, params=params, headers=_HEADERS, timeout=10
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Find foreign broker rows (code starts with "DB" / "YP" / etc.)
+        # IDX marks foreign with foreignBuyVal / foreignSellVal at top level
+        foreign_buy  = float(data.get("foreignBuyVal",  0) or 0)
+        foreign_sell = float(data.get("foreignSellVal", 0) or 0)
+        net = foreign_buy - foreign_sell
 
         return {
-            "jci_close":           round(price, 2) if price else None,
-            "jci_change_pct":      round(chg_pct, 2),
-            "total_foreign_net_idr": foreign_net,
-            "market_status":       "OPEN" if price else "CLOSED",
+            "date":         date_str,
+            "buy_val_idr":  foreign_buy,
+            "sell_val_idr": foreign_sell,
+            "net_val_idr":  net,
+            "direction":    "BUY" if net > 0 else ("SELL" if net < 0 else "NEUTRAL"),
         }
     except Exception as e:
-        logger.error(f"fetch_jci_summary: {e}")
+        logger.debug("foreign flow fetch failed for %s: %s", symbol, e)
         return None
+
+
+def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
+    """
+    Fetch aggregate market-wide foreign net flow from IDX.
+    Returns: {net_val_idr, buy_val_idr, sell_val_idr, direction, date} or None.
+    """
+    date_str = date_str or _trading_date_str(1)
+    try:
+        resp = requests.get(
+            _IDX_FOREIGN_URL,
+            params={"date": date_str},
+            headers=_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        buy  = float(data.get("foreignBuyVal",  0) or 0)
+        sell = float(data.get("foreignSellVal", 0) or 0)
+        net  = buy - sell
+
+        return {
+            "date":         date_str,
+            "buy_val_idr":  buy,
+            "sell_val_idr": sell,
+            "net_val_idr":  net,
+            "direction":    "BUY" if net > 0 else ("SELL" if net < 0 else "NEUTRAL"),
+        }
+    except Exception as e:
+        logger.debug("market foreign flow fetch failed: %s", e)
+        return None
+
+
+# ── Quick liquidity pre-filter ────────────────────────────────────────────────
+
+def filter_liquid(
+    symbols: list[str],
+    min_price: float = config.MIN_PRICE,
+    max_price: float = config.MAX_PRICE,
+    min_avg_val: float = config.MIN_AVG_DAILY_VAL,
+    lookback_days: int = 20,
+) -> list[str]:
+    """
+    Fast liquidity filter before full indicator calculation.
+    Downloads only 30d of data to check avg daily value and price range.
+    Returns symbols that pass all gates.
+    """
+    data = fetch_daily_batch(symbols, period="1mo")
+    liquid: list[str] = []
+
+    for sym, df in data.items():
+        if df.empty or len(df) < 5:
+            continue
+        last_price = df["close"].iloc[-1]
+        if not (min_price <= last_price <= max_price):
+            continue
+        recent = df.tail(lookback_days)
+        avg_val = (recent["close"] * recent["volume"]).mean()
+        if avg_val >= min_avg_val:
+            liquid.append(sym)
+
+    logger.info(
+        "liquidity filter: %d/%d symbols passed", len(liquid), len(symbols)
+    )
+    return liquid

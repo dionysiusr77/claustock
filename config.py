@@ -3,136 +3,93 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Stocks ────────────────────────────────────
-# Default watchlist — loaded into runtime watchlist on first start
-STOCKS = [
-    "BBCA.JK",
-    "BBRI.JK",
-    "TLKM.JK",
-    "ASII.JK",
-    "GOTO.JK",
-    "BREN.JK",
-    "BMRI.JK",
-    "UNVR.JK",
-]
+# ── Timezone ──────────────────────────────────────────────────────────────────
+MARKET_TZ = "Asia/Jakarta"
 
-# Broader universe scanned for whale detection (high volume surges)
-# LQ45 + IDX80 liquid names — not all are in the default watchlist
-UNIVERSE = [
-    # Default watchlist
-    "BBCA.JK", "BBRI.JK", "TLKM.JK", "ASII.JK",
-    "GOTO.JK", "BREN.JK", "BMRI.JK", "UNVR.JK",
-    # Extended LQ45 / IDX80
-    "ANTM.JK", "INDF.JK", "KLBF.JK", "MDKA.JK",
-    "MEDC.JK", "MIKA.JK", "PGAS.JK", "PTBA.JK",
-    "SMGR.JK", "TBIG.JK", "TPIA.JK", "ADRO.JK",
-    "AMRT.JK", "CPIN.JK", "EMTK.JK", "EXCL.JK",
-    "HMSP.JK", "ICBP.JK", "INCO.JK", "INKP.JK",
-    "ISAT.JK", "MNCN.JK", "SIDO.JK", "TOWR.JK",
-]
+# ── Market hours (WIB) ────────────────────────────────────────────────────────
+SESSION1_START = (9, 0)
+SESSION1_END   = (12, 0)
+SESSION2_START = (13, 30)
+SESSION2_END   = (15, 49)
 
-# Whale scanner settings
-WHALE_TOP_N               = 3     # number of high-volume stocks to surface per scan
-WHALE_VOL_THRESHOLD       = 3.0   # volume ratio must be >= this to qualify
-WHALE_MIN_SCORE           = 55    # minimum tech score (0-35 scale) to auto-add
-WHALE_AUTO_ADD            = True  # if True, auto-add to watchlist; else just notify
-WHALE_CONFIRM_THRESHOLD   = 5.0   # vol ratio >= this sends a Yes/No Telegram prompt instead of auto-deciding
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+EOD_SCAN_TIME     = (16, 30)   # nightly D-1 full universe scan (after market close)
+BRIEFING_TIME     = (8, 30)    # morning briefing delivery
+MIDDAY_TIME       = (12, 0)    # optional midday update
 
-# ── Scalper settings ──────────────────────────
-SCALP_MAX_RSI            = 50     # RSI must be BELOW this to qualify as scalp
-SCALP_MIN_DROP_FROM_OPEN = 0.5    # minimum % drop from open price to qualify
-SCALP_MAX_DROP_FROM_OPEN = 6.0    # maximum % drop — beyond this is a crash
-SCALP_MIN_SCORE          = 55     # minimum scalp score (0–100)
-REQUIRE_DIVERGENCE       = os.getenv("REQUIRE_DIVERGENCE", "false").lower() == "true"
+# ── RSI thresholds ────────────────────────────────────────────────────────────
+RSI_OVERSOLD        = 30
+RSI_OVERBOUGHT      = 70
+RSI_SWEET_SPOT_LOW  = 45
+RSI_SWEET_SPOT_HIGH = 65
 
-# ── Momentum settings ─────────────────────────
-MOMENTUM_MIN_RSI         = 50     # RSI must be ABOVE this for momentum
-MOMENTUM_MIN_NEWS_SCORE  = 12     # minimum news score (0–20) to qualify
-MOMENTUM_MIN_SCORE       = 60     # minimum total score (0–100) for momentum
-MOMENTUM_HOLD_DAYS       = 3      # hold for up to 3 trading days
-MOMENTUM_TARGET_PCT      = 3.0    # take-profit target (%)
-MOMENTUM_STOP_LOSS_PCT   = -1.5   # stop-loss level (%)
+# ── Indicator periods ─────────────────────────────────────────────────────────
+EMA_FAST        = 20
+EMA_MID         = 50
+EMA_SLOW        = 200
+RSI_PERIOD      = 14
+MACD_FAST       = 12
+MACD_SLOW       = 26
+MACD_SIGNAL     = 9
+BB_PERIOD       = 20
+BB_STD          = 2.0
+ATR_PERIOD      = 14
+STOCH_K         = 14
+STOCH_D         = 3
+VOL_MA_PERIOD   = 20
+BREAKOUT_PERIOD = 20          # N-day high for breakout detection
 
-# Sector correlation guard — max same-sector positions in scalp watchlist
-MAX_SAME_SECTOR = 2
+# ── Divergence ────────────────────────────────────────────────────────────────
+DIV_LOOKBACK          = 60    # candles to look back for divergence
+DIV_PIVOT_WINDOW      = 5     # bars left/right to qualify a pivot
+DIV_BULLISH_BONUS     = 5     # bonus points added to momentum score
+DIV_HIDDEN_BULL_BONUS = 3
+DIV_BEARISH_PENALTY   = -10   # subtracted from total score (auto-disqualifier)
 
-# ── Sector mapping ────────────────────────────
-SECTORS: dict[str, str] = {
-    # Banking
-    "BBCA.JK": "BANKING", "BBRI.JK": "BANKING", "BMRI.JK": "BANKING",
-    "BNGA.JK": "BANKING", "BBNI.JK": "BANKING",
-    # Telco
-    "TLKM.JK": "TELCO",   "EXCL.JK": "TELCO",   "ISAT.JK": "TELCO",
-    "TBIG.JK": "TELCO",   "TOWR.JK": "TELCO",
-    # Consumer
-    "UNVR.JK": "CONSUMER","ICBP.JK": "CONSUMER", "INDF.JK": "CONSUMER",
-    "AMRT.JK": "CONSUMER","HMSP.JK": "CONSUMER", "SIDO.JK": "CONSUMER",
-    "KLBF.JK": "CONSUMER","CPIN.JK": "CONSUMER",
-    # Energy / Mining
-    "ADRO.JK": "ENERGY",  "PTBA.JK": "ENERGY",   "PGAS.JK": "ENERGY",
-    "MEDC.JK": "ENERGY",  "MDKA.JK": "ENERGY",   "INCO.JK": "ENERGY",
-    "ANTM.JK": "ENERGY",
-    # Industrial / Automotive
-    "ASII.JK": "INDUSTRIAL","SMGR.JK": "INDUSTRIAL","INKP.JK": "INDUSTRIAL",
-    "TPIA.JK": "INDUSTRIAL",
-    # Tech / Media
-    "GOTO.JK": "TECH",    "EMTK.JK": "TECH",     "MNCN.JK": "TECH",
-    # Healthcare
-    "MIKA.JK": "HEALTHCARE",
-    # Energy (renewables/new)
-    "BREN.JK": "ENERGY",
-}
+# ── Scoring weights (must sum to 100) ─────────────────────────────────────────
+WEIGHT_TREND    = 25
+WEIGHT_MOMENTUM = 20
+WEIGHT_VOLUME   = 20
+WEIGHT_PATTERN  = 15
+WEIGHT_FOREIGN  = 15
+WEIGHT_BREADTH  = 5
 
-# ── Timeframes ────────────────────────────────
-CANDLE_INTERVAL = "5m"    # 5-minute candles during market
-CANDLE_LIMIT    = 60      # 60 candles = 5 hours history
-DAILY_CANDLES   = 365     # 1yr for Prophet training
+# ── Liquidity filter (Stage 1 screen) ─────────────────────────────────────────
+MIN_MARKET_CAP_IDR   = 500_000_000_000   # 500B IDR
+MIN_AVG_DAILY_VAL    = 5_000_000_000     # 5B IDR/day avg value traded
+MIN_PRICE            = 200               # IDR
+MAX_PRICE            = 50_000            # IDR
 
-# ── Market hours (WIB = UTC+7) ────────────────
-MARKET_TZ      = "Asia/Jakarta"
-SESSION1_START = (9, 0)    # 09:00
-SESSION1_END   = (12, 0)   # 12:00
-SESSION2_START = (13, 30)   # 13:30
-SESSION2_END   = (15, 49)  # 15:49
-BRIEFING1_TIME = (8, 45)   # Pre-session 1 briefing
-BRIEFING2_TIME = (13, 15)  # Pre-session 2 briefing
-EOD_TIME       = (16, 0)   # End of day summary
+# ── Setup filter (Stage 2 screen) ─────────────────────────────────────────────
+MIN_SCORE            = int(os.getenv("MIN_SCORE", "60"))
+MIN_VOL_RATIO        = 1.2               # volume must be >= 1.2x 20-day avg
+MIN_RR               = 1.5              # minimum risk:reward ratio
 
-# ── Scan interval ─────────────────────────────
-SCAN_INTERVAL_SEC = 300    # 5 minutes during market hours
+# ── AI briefing ───────────────────────────────────────────────────────────────
+TOP_N_AI        = int(os.getenv("TOP_N_AI", "15"))
+CLAUDE_MODEL    = "claude-haiku-4-5-20251001"
 
-# ── Scoring weights ───────────────────────────
-WEIGHT_TECHNICAL = 40
-WEIGHT_PROPHET   = 25
-WEIGHT_FOREIGN   = 20
-WEIGHT_NEWS      = 20
-
-# ── Risk ──────────────────────────────────────
-IDX_CAPITAL        = int(os.getenv("IDX_CAPITAL", "5000000"))
-IDX_MAX_LOTS       = int(os.getenv("IDX_MAX_LOTS_PER_STOCK", "5"))
-IDX_DAILY_LOSS_PCT = float(os.getenv("IDX_DAILY_LOSS_LIMIT_PCT", "3.0"))
-IDX_MIN_SCORE      = int(os.getenv("IDX_MIN_SCORE", "60"))
-
-# ── Fees ──────────────────────────────────────
+# ── IDX fee structure ─────────────────────────────────────────────────────────
 BUY_FEE_PCT    = 0.0015   # 0.15%
-SELL_FEE_PCT   = 0.0025   # 0.25% (incl. 0.10% tax)
-FEE_RT         = BUY_FEE_PCT + SELL_FEE_PCT  # 0.40% round trip
-MIN_TARGET_PCT = 1.5       # minimum viable target after fees
+SELL_FEE_PCT   = 0.0025   # 0.25% (incl. 0.10% PPh)
+FEE_RT         = BUY_FEE_PCT + SELL_FEE_PCT   # 0.40% round trip
+MIN_TARGET_PCT = 1.5      # minimum viable profit after fees
 
-# ── Firebase ──────────────────────────────────
-FIREBASE_CRED_JSON = os.getenv("FIREBASE_CRED_JSON", "")
+# ── Capital & risk ────────────────────────────────────────────────────────────
+CAPITAL_IDR          = int(os.getenv("CAPITAL_IDR", "10000000"))
+MAX_POSITIONS        = int(os.getenv("MAX_POSITIONS", "5"))
+DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
+MAX_RISK_PER_TRADE   = 0.02   # 2% of capital max risk per trade
 
-# ── Anthropic ─────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = "claude-haiku-4-5-20251001"
+# ── Universe ──────────────────────────────────────────────────────────────────
+UNIVERSE = os.getenv("UNIVERSE", "IDX80")   # LQ45 | IDX80 | COMPOSITE
 
-# ── Telegram ──────────────────────────────────
+# ── Credentials ───────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
-
-# Comma-separated user/group IDs allowed to run commands.
-# Supports personal IDs and group chat IDs (negative numbers).
-_raw_allowed = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "310977969,-5144122635")
-TELEGRAM_ALLOWED_USER_IDS: set[int] = {
-    int(x.strip()) for x in _raw_allowed.split(",") if x.strip()
-}
+TELEGRAM_CHAT_IDS  = [
+    cid.strip()
+    for cid in os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
+    if cid.strip()
+]
+FIREBASE_CRED_JSON = os.getenv("FIREBASE_CRED_JSON", "")
