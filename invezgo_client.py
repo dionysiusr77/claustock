@@ -161,17 +161,36 @@ def get_universe(tier: str = config.UNIVERSE) -> list[str]:
     return sorted(set(tickers))
 
 
+# ── Chart request (stock + index) ─────────────────────────────────────────────
+
+_INVEZGO_BASE = "https://api.invezgo.com"
+
+
+def _chart_request(code: str, from_date: str, to_date: str, kind: str = "stock") -> list:
+    """
+    GET /analysis/chart/{kind}/{code}
+    kind: "stock" for equities, "index" for indices (e.g. COMPOSITE)
+    Returns raw list or raises on HTTP error.
+    """
+    import requests as _req
+    url = f"{_INVEZGO_BASE}/analysis/chart/{kind}/{code}"
+    resp = _req.get(
+        url,
+        params={"from": from_date, "to": to_date},
+        headers={"Authorization": f"Bearer {config.INVEZGO_API_KEY}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ── Daily OHLCV ───────────────────────────────────────────────────────────────
 
 def fetch_daily(symbol: str, days: int = 365, min_rows: int = 60) -> pd.DataFrame | None:
     """Single-stock daily OHLCV. Returns None on failure."""
     from_date, to_date = _date_range(days)
     try:
-        raw = _get_client().analysis.get_chart(
-            code=_code(symbol),
-            from_date=from_date,
-            to_date=to_date,
-        )
+        raw = _chart_request(_code(symbol), from_date, to_date, kind="stock")
         df = _parse_ohlcv(raw)
         if len(df) < min_rows:
             logger.debug("Insufficient OHLCV data for %s (%d rows, need %d)", symbol, len(df), min_rows)
@@ -211,17 +230,44 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
 
 # ── Market breadth (IHSG + sectors) ──────────────────────────────────────────
 
+def _fetch_ihsg_invezgo() -> dict | None:
+    """Fetch IHSG via GET /analysis/chart/index/COMPOSITE."""
+    from_date, to_date = _date_range(7)   # need at least 2 trading days
+    try:
+        raw = _chart_request("COMPOSITE", from_date, to_date, kind="index")
+        df = _parse_ohlcv(raw)
+        if df.empty or len(df) < 2:
+            logger.debug("IHSG index chart: insufficient rows (%d)", len(df))
+            return None
+        prev = float(df["close"].iloc[-2])
+        last = float(df["close"].iloc[-1])
+        chg  = (last - prev) / prev * 100
+        logger.info("IHSG via Invezgo: %.2f (%.2f%%)", last, chg)
+        return {
+            "close":      round(last, 2),
+            "change_pct": round(chg, 2),
+            "direction":  "UP" if chg > 0 else ("DOWN" if chg < 0 else "FLAT"),
+        }
+    except Exception as e:
+        logger.debug("Invezgo IHSG index chart failed: %s", e)
+        return None
+
+
 def fetch_market_breadth() -> dict:
     """
     Fetch yesterday's close + change% for IHSG and sectoral indices.
-    Uses yfinance batch for sectors; if ^JKSE fails in the batch (common),
-    falls back to the retry-enabled _fetch_ihsg() helper.
+    Uses yfinance batch for sectors. IHSG is fetched via Invezgo first
+    (more reliable than ^JKSE on yfinance), with yfinance as fallback.
     """
     from fetcher import fetch_market_breadth as _yf_breadth
     result = _yf_breadth()
 
-    # ^JKSE often fails in the batch download — retry it individually
-    if not result.get("IHSG", {}).get("close"):
+    # Prefer Invezgo for IHSG — yfinance ^JKSE is unreliable
+    ihsg = _fetch_ihsg_invezgo()
+    if ihsg:
+        result["IHSG"] = ihsg
+    elif not result.get("IHSG", {}).get("close"):
+        # Last resort: yfinance individual retry with period fallback
         from market_breadth import _fetch_ihsg
         df = _fetch_ihsg("5d")
         if not df.empty and len(df) >= 2:
@@ -229,17 +275,17 @@ def fetch_market_breadth() -> dict:
                 df.columns = [c.lower() for c in df.columns]
                 df = df.dropna(subset=["close"])
                 if len(df) >= 2:
-                    prev  = float(df["close"].iloc[-2])
-                    last  = float(df["close"].iloc[-1])
-                    chg   = (last - prev) / prev * 100
+                    prev = float(df["close"].iloc[-2])
+                    last = float(df["close"].iloc[-1])
+                    chg  = (last - prev) / prev * 100
                     result["IHSG"] = {
                         "close":      round(last, 2),
                         "change_pct": round(chg, 2),
                         "direction":  "UP" if chg > 0 else ("DOWN" if chg < 0 else "FLAT"),
                     }
-                    logger.info("IHSG fallback fetch OK: %.2f (%.2f%%)", last, chg)
+                    logger.info("IHSG via yfinance fallback: %.2f (%.2f%%)", last, chg)
             except Exception as e:
-                logger.warning("IHSG fallback parse failed: %s", e)
+                logger.warning("IHSG yfinance fallback parse failed: %s", e)
 
     if not result.get("IHSG", {}).get("close"):
         logger.warning("IHSG data unavailable — market breadth header will show None")

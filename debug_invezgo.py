@@ -60,6 +60,11 @@ def main():
     logger.info("Batch result: %d/%d OK — symbols: %s",
                 len(results), len(TEST_STOCKS), list(results.keys()))
 
+    logger.info("\n--- IHSG test ---")
+    from invezgo_client import _fetch_ihsg_invezgo
+    ihsg = _fetch_ihsg_invezgo()
+    logger.info("IHSG result: %s", ihsg)
+
 
 if __name__ == "__main__":
     main()
