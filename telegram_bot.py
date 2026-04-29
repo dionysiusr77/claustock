@@ -129,6 +129,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "<b>Perintah tersedia:</b>\n\n"
         "/briefing — kirim morning briefing hari ini\n"
+        "/midday   — briefing pre-Sesi 2 (data Sesi 1)\n"
         "/scan     — jalankan D-1 scan sekarang\n"
         "/pick BBCA — analisa satu saham\n"
         "/status   — status bot dan market\n"
@@ -169,6 +170,27 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(
             "Belum ada briefing hari ini. Gunakan /scan untuk generate baru."
         )
+
+
+async def cmd_midday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send pre-Sesi 2 midday briefing on demand."""
+    if not _allowed(update):
+        return
+
+    await update.message.reply_text("⏳ Menyiapkan briefing Sesi 2...")
+
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(_executor, _build_midday_briefing)
+        if text:
+            await _reply_long(update, text)
+        else:
+            await update.message.reply_text(
+                "Belum ada data untuk midday briefing. Pastikan morning scan sudah dijalankan."
+            )
+    except Exception as e:
+        logger.exception("cmd_midday error")
+        await update.message.reply_text(f"❌ Midday briefing gagal: {e}")
 
 
 async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -233,6 +255,33 @@ def _build_briefing(scan_data: dict) -> str:
     text = build_briefing(scan_data, breadth_summary)
     save_scan(scan_data)
     save_briefing(text)
+    return text
+
+
+def _build_midday_briefing() -> str | None:
+    from firestore_client import load_latest_scan, save_midday_briefing
+    from invezgo_client import fetch_intraday_batch, fetch_intraday_sesi1
+    from ai_briefing import build_midday_briefing
+
+    scan_data = load_latest_scan()
+    if not scan_data:
+        logger.warning("midday: no saved scan found")
+        return None
+
+    candidates = scan_data.get("candidates", [])
+    if not candidates:
+        logger.warning("midday: saved scan has no candidates")
+        return None
+
+    symbols     = [c["symbol"] for c in candidates]
+    prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in candidates}
+    sesi1_map   = fetch_intraday_batch(symbols, prev_closes)
+
+    ihsg_sesi1 = fetch_intraday_sesi1("COMPOSITE", prev_close=None)
+
+    text = build_midday_briefing(candidates, sesi1_map, ihsg_sesi1)
+    if text:
+        save_midday_briefing(text)
     return text
 
 
@@ -307,6 +356,21 @@ async def job_eod_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("EOD scan job failed")
 
 
+async def job_midday_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Pre-Sesi 2 briefing at 13:15 WIB."""
+    logger.info("Midday briefing job triggered")
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(_executor, _build_midday_briefing)
+        if text:
+            await broadcast(context.bot, text)
+        else:
+            logger.warning("Midday briefing: no text generated")
+    except Exception:
+        logger.exception("Midday briefing job failed")
+        await broadcast(context.bot, "⚠️ Midday briefing gagal dibuat. Cek log.")
+
+
 async def job_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Morning briefing delivery at 08:30 WIB."""
     logger.info("Morning briefing job triggered")
@@ -354,6 +418,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("help",     cmd_help))
     app.add_handler(CommandHandler("status",   cmd_status))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
+    app.add_handler(CommandHandler("midday",   cmd_midday))
     app.add_handler(CommandHandler("scan",     cmd_scan))
     app.add_handler(CommandHandler("pick",     cmd_pick))
 

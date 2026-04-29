@@ -238,6 +238,98 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
     return result
 
 
+# ── Intraday (Sesi 1 snapshot) ────────────────────────────────────────────────
+
+import pytz as _pytz
+_WIB = _pytz.timezone("Asia/Jakarta")
+
+# Sesi 1: 09:00–12:00 WIB
+_SESI1_START = "09:00"
+_SESI1_END   = "12:00"
+
+
+def fetch_intraday_sesi1(symbol: str, prev_close: float | None = None) -> dict | None:
+    """
+    Fetch Sesi 1 (09:00–12:00 WIB) intraday snapshot for today.
+
+    Returns:
+      { open, high, low, close, volume,
+        pct_change,          # vs prev_close (D-1) if provided
+        vs_entry,            # close vs prev_close (same if no prev_close)
+        candles: int }       # number of intraday candles in Sesi 1
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        raw = _get_client().analysis.get_intraday(code=_code(symbol), date=today)
+    except Exception as e:
+        logger.debug("get_intraday failed for %s: %s", symbol, e)
+        return None
+
+    df = _parse_ohlcv(raw)
+    if df.empty:
+        return None
+
+    # Localise index to WIB for time-of-day filtering
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC")
+    df.index = df.index.tz_convert(_WIB)
+
+    sesi1 = df.between_time(_SESI1_START, _SESI1_END)
+    if sesi1.empty:
+        return None
+
+    open_s1  = float(sesi1["open"].iloc[0])
+    high_s1  = float(sesi1["high"].max())
+    low_s1   = float(sesi1["low"].min())
+    close_s1 = float(sesi1["close"].iloc[-1])
+    vol_s1   = int(sesi1["volume"].sum())
+
+    pct_chg = None
+    if prev_close and prev_close > 0:
+        pct_chg = round((close_s1 - prev_close) / prev_close * 100, 2)
+
+    return {
+        "open":       round(open_s1, 0),
+        "high":       round(high_s1, 0),
+        "low":        round(low_s1, 0),
+        "close":      round(close_s1, 0),
+        "volume":     vol_s1,
+        "pct_change": pct_chg,
+        "candles":    len(sesi1),
+    }
+
+
+def fetch_intraday_batch(
+    symbols: list[str],
+    prev_closes: dict[str, float] | None = None,
+    max_workers: int = 4,
+) -> dict[str, dict | None]:
+    """
+    Fetch Sesi 1 intraday snapshots concurrently for multiple symbols.
+    prev_closes: {symbol: D-1 close price} for pct_change calculation.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    prev_closes = prev_closes or {}
+    results: dict[str, dict | None] = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_map = {
+            pool.submit(fetch_intraday_sesi1, sym, prev_closes.get(sym)): sym
+            for sym in symbols
+        }
+        for future in as_completed(future_map):
+            sym = future_map[future]
+            try:
+                results[sym] = future.result()
+            except Exception:
+                results[sym] = None
+
+    ok = sum(1 for v in results.values() if v is not None)
+    logger.info("fetch_intraday_batch: %d/%d symbols OK", ok, len(symbols))
+    return results
+
+
 # ── Market breadth (IHSG + sectors) ──────────────────────────────────────────
 
 def _fetch_ihsg_invezgo() -> dict | None:

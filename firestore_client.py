@@ -183,6 +183,48 @@ def load_latest_briefing() -> str | None:
         return None
 
 
+# ── Midday briefing ───────────────────────────────────────────────────────────
+
+def save_midday_briefing(text: str, date: str | None = None) -> bool:
+    """Save pre-Sesi 2 briefing text."""
+    db = _get_db()
+    if db is None:
+        return False
+
+    date = date or _today()
+    try:
+        db.collection("v2_midday_briefings").document(date).set({
+            "date":     date,
+            "text":     text,
+            "saved_at": datetime.now(_WIB).isoformat(),
+        })
+        return True
+    except Exception as e:
+        logger.error("save_midday_briefing failed: %s", e)
+        return False
+
+
+def load_latest_midday_briefing() -> str | None:
+    """Return the most recently saved midday briefing text."""
+    db = _get_db()
+    if db is None:
+        return None
+
+    try:
+        docs = (
+            db.collection("v2_midday_briefings")
+            .order_by("date", direction="DESCENDING")
+            .limit(1)
+            .stream()
+        )
+        for doc in docs:
+            return doc.to_dict().get("text")
+        return None
+    except Exception as e:
+        logger.error("load_latest_midday_briefing failed: %s", e)
+        return None
+
+
 # ── Individual picks ──────────────────────────────────────────────────────────
 
 def save_pick(result: dict, date: str | None = None) -> bool:

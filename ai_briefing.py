@@ -339,6 +339,241 @@ def format_telegram(
     return "\n".join(lines)
 
 
+# ── Midday / pre-Sesi 2 briefing ─────────────────────────────────────────────
+
+_MIDDAY_SYSTEM_PROMPT = """Kamu adalah trader IDX profesional yang menulis update singkat sebelum Sesi 2 (13:30 WIB).
+
+Kamu sudah punya morning picks dari D-1 scan. Sekarang Sesi 1 (09:00–12:00) sudah selesai dan kamu punya data intraday-nya.
+
+TUGASMU:
+Evaluasi setiap morning pick berdasarkan aksi harga Sesi 1, lalu berikan rekomendasi untuk Sesi 2.
+
+STATUS YANG BISA DIBERIKAN:
+- MASIH_VALID : Setup D-1 intact, harga di/dekat zona entry, volume Sesi 1 konfirmasi
+- TUNGGU      : Setup intact tapi harga belum di zona entry — tunggu pullback di Sesi 2
+- SUDAH_JALAN : Harga sudah naik melewati entry/target — terlambat masuk, skip
+- BATAL       : Support pecah atau setup rusak di Sesi 1 — jangan masuk
+
+FOKUS ANALISA:
+- Apakah harga Sesi 1 sudah menyentuh zona entry D-1?
+- Volume Sesi 1 tinggi (konfirmasi) atau rendah (waspadai)?
+- IHSG Sesi 1 naik atau turun? Apakah mempengaruhi setup?
+- Jika ada setup baru yang muncul dari aksi Sesi 1, sebutkan sebagai BARU
+
+GAYA PENULISAN:
+- Bahasa Indonesia, singkat, langsung ke angka dan aksi
+- Sertakan zona entry baru jika berubah dari morning pick
+- Maksimal 2 kalimat per pick
+
+OUTPUT FORMAT (JSON valid, tidak ada teks lain):
+{
+  "sesi1_summary": "string — 1 kalimat ringkasan IHSG dan market Sesi 1",
+  "ihsg_sesi1_pct": number,
+  "picks": [
+    {
+      "symbol": "BBRI",
+      "status": "MASIH_VALID|TUNGGU|SUDAH_JALAN|BATAL",
+      "entry_zone": "string — zona entry untuk Sesi 2 (e.g. '4250–4300')",
+      "note": "string — 1-2 kalimat analisa Sesi 1 dan rekomendasi Sesi 2",
+      "hold_duration": "intraday|overnight"
+    }
+  ],
+  "new_picks": [
+    {
+      "symbol": "TLKM",
+      "setup": "string",
+      "note": "string — kenapa ini menarik setelah Sesi 1"
+    }
+  ],
+  "risks": ["string"]
+}"""
+
+
+def _build_midday_prompt(
+    morning_candidates: list[dict],
+    sesi1_map:          dict[str, dict | None],
+    ihsg_sesi1:         dict | None,
+) -> str:
+    """Build compact JSON payload for the midday Claude call."""
+    picks_payload = []
+    for r in morning_candidates:
+        sym    = r["symbol"]
+        snap   = r.get("snapshot", {})
+        levels = r.get("trade_levels") or {}
+        s1     = sesi1_map.get(sym) or sesi1_map.get(sym.replace(".JK", ""))
+
+        picks_payload.append({
+            "symbol":       sym.replace(".JK", ""),
+            "d1_score":     r.get("total_score"),
+            "d1_setup":     r.get("setup"),
+            "d1_entry":     levels.get("entry"),
+            "d1_target":    levels.get("target"),
+            "d1_stop":      levels.get("stop_loss"),
+            "d1_rsi":       snap.get("rsi"),
+            "d1_close":     snap.get("close"),
+            "sesi1": {
+                "open":       s1.get("open")       if s1 else None,
+                "high":       s1.get("high")       if s1 else None,
+                "low":        s1.get("low")        if s1 else None,
+                "close":      s1.get("close")      if s1 else None,
+                "pct_change": s1.get("pct_change") if s1 else None,
+                "volume":     s1.get("volume")     if s1 else None,
+                "candles":    s1.get("candles")    if s1 else None,
+                "data":       s1 is not None,
+            },
+        })
+
+    payload = {
+        "time":  datetime.now(_WIB).strftime("%H:%M WIB"),
+        "ihsg_sesi1": ihsg_sesi1,
+        "morning_picks": picks_payload,
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def generate_midday_briefing(
+    morning_candidates: list[dict],
+    sesi1_map:          dict[str, dict | None],
+    ihsg_sesi1:         dict | None,
+) -> dict | None:
+    """Call Claude for the pre-Sesi 2 briefing. Returns parsed JSON or None."""
+    user_prompt = _build_midday_prompt(morning_candidates, sesi1_map, ihsg_sesi1)
+    try:
+        response = _client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=1500,
+            system=[
+                {
+                    "type": "text",
+                    "text": _MIDDAY_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw.strip())
+    except json.JSONDecodeError as e:
+        logger.error("Midday briefing: Claude returned invalid JSON: %s", e)
+        return None
+    except Exception as e:
+        logger.error("Midday briefing: Claude API call failed: %s", e)
+        return None
+
+
+_STATUS_EMOJI = {
+    "MASIH_VALID":  "✅",
+    "TUNGGU":       "⏳",
+    "SUDAH_JALAN":  "🚀",
+    "BATAL":        "❌",
+}
+
+
+def format_midday_telegram(
+    briefing:           dict,
+    morning_candidates: list[dict],
+    sesi1_map:          dict[str, dict | None],
+) -> str:
+    """Format midday briefing JSON into Telegram HTML."""
+    now  = datetime.now(_WIB).strftime("%H:%M WIB")
+    cmap = {}
+    for r in morning_candidates:
+        cmap[r["symbol"]] = r
+        cmap[r["symbol"].replace(".JK", "")] = r
+
+    lines = [
+        "<b>📊 PRE-SESI 2 UPDATE</b>",
+        f"<i>{now} — evaluasi morning picks setelah Sesi 1</i>",
+        "",
+        html.escape(briefing.get("sesi1_summary", "")),
+        "",
+    ]
+
+    picks = briefing.get("picks", [])
+    if picks:
+        lines.append("<b>━━━ STATUS MORNING PICKS ━━━</b>")
+        lines.append("")
+
+    for pick in picks:
+        sym    = pick["symbol"]
+        status = pick.get("status", "TUNGGU")
+        emoji  = _STATUS_EMOJI.get(status, "⏳")
+        cand   = cmap.get(sym, cmap.get(f"{sym}.JK", {}))
+        levels = cand.get("trade_levels") or {}
+        s1     = sesi1_map.get(f"{sym}.JK") or sesi1_map.get(sym)
+
+        s1_line = ""
+        if s1:
+            pct = s1.get("pct_change")
+            pct_str = f"{pct:+.2f}%" if pct is not None else "—"
+            s1_line = (
+                f"   Sesi 1: H <code>{s1['high']:,.0f}</code> "
+                f"L <code>{s1['low']:,.0f}</code> "
+                f"tutup <code>{s1['close']:,.0f}</code> ({pct_str})"
+            )
+
+        target  = levels.get("target", "—")
+        sl      = levels.get("stop_loss", "—")
+
+        lines += [
+            f"<b>{sym}</b> {emoji} <b>{status}</b>",
+            f"   {html.escape(pick.get('note', ''))}",
+            s1_line,
+            f"   Entry Sesi 2: <code>{html.escape(pick.get('entry_zone', '—'))}</code>"
+            f"  |  Target: <code>{target:,.0f}</code>"
+            f"  Inv: <code>{sl:,.0f}</code>"
+            if isinstance(target, (int, float)) else
+            f"   Entry Sesi 2: <code>{html.escape(pick.get('entry_zone', '—'))}</code>",
+            "",
+        ]
+
+    new_picks = briefing.get("new_picks", [])
+    if new_picks:
+        lines.append("<b>━━━ SETUP BARU SESI 2 ━━━</b>")
+        for p in new_picks:
+            lines.append(
+                f"• <b>{html.escape(p['symbol'])}</b> — {html.escape(p.get('note', ''))}"
+            )
+        lines.append("")
+
+    risks = briefing.get("risks", [])
+    if risks:
+        lines.append("<b>⚠️ RISIKO</b>")
+        for r in risks:
+            lines.append(f"• {html.escape(r)}")
+
+    return "\n".join(l for l in lines if l is not None)
+
+
+def build_midday_briefing(
+    morning_candidates: list[dict],
+    sesi1_map:          dict[str, dict | None],
+    ihsg_sesi1:         dict | None,
+) -> str:
+    """Full midday pipeline: generate → format → return Telegram string."""
+    briefing = generate_midday_briefing(morning_candidates, sesi1_map, ihsg_sesi1)
+    if briefing is None:
+        # Rule-based fallback
+        lines = [
+            "<b>📊 PRE-SESI 2 UPDATE</b>",
+            "<i>(Claude API tidak tersedia — data mentah)</i>",
+            "",
+        ]
+        for r in morning_candidates[:5]:
+            sym = r["symbol"].replace(".JK", "")
+            s1  = sesi1_map.get(r["symbol"]) or sesi1_map.get(sym)
+            pct = s1.get("pct_change") if s1 else None
+            pct_str = f"{pct:+.2f}%" if pct is not None else "no data"
+            lines.append(f"• <b>{sym}</b> — Sesi 1: {pct_str}")
+        briefing = {"picks": [], "new_picks": [], "risks": [], "sesi1_summary": ""}
+
+    return format_midday_telegram(briefing, morning_candidates, sesi1_map)
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def build_briefing(scan_data: dict, breadth_summary: dict) -> str:

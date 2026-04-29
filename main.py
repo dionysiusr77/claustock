@@ -1,8 +1,9 @@
 """
 Entry point.
-Starts the Telegram bot with two scheduled jobs:
+Starts the Telegram bot with three scheduled jobs:
   16:30 WIB Mon–Fri — EOD D-1 scan
   08:30 WIB Mon–Fri — Morning briefing delivery
+  13:15 WIB Mon–Fri — Pre-Sesi 2 midday briefing
 """
 
 import datetime
@@ -11,7 +12,7 @@ import logging
 import pytz
 
 import config
-from telegram_bot import build_app, job_eod_scan, job_morning_briefing
+from telegram_bot import build_app, job_eod_scan, job_morning_briefing, job_midday_briefing
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -61,10 +62,22 @@ def main() -> None:
         name="morning_briefing",
     )
 
+    jq.run_daily(
+        job_midday_briefing,
+        time=datetime.time(
+            config.MIDDAY_TIME[0],
+            config.MIDDAY_TIME[1],
+            tzinfo=_WIB,
+        ),
+        days=(0, 1, 2, 3, 4),
+        name="midday_briefing",
+    )
+
     logger.info(
-        "Jobs scheduled: EOD scan %02d:%02d WIB | Briefing %02d:%02d WIB",
+        "Jobs scheduled: EOD scan %02d:%02d | Briefing %02d:%02d | Midday %02d:%02d WIB",
         *config.EOD_SCAN_TIME,
         *config.BRIEFING_TIME,
+        *config.MIDDAY_TIME,
     )
 
     app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])

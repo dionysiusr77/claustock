@@ -15,7 +15,7 @@ SESSION2_END   = (15, 49)
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 EOD_SCAN_TIME     = (16, 30)   # nightly D-1 full universe scan (after market close)
 BRIEFING_TIME     = (8, 30)    # morning briefing delivery
-MIDDAY_TIME       = (12, 0)    # optional midday update
+MIDDAY_TIME       = (13, 15)   # pre-Sesi 2 briefing (15 min before 13:30 open)
 
 # ── RSI thresholds ────────────────────────────────────────────────────────────
 RSI_OVERSOLD        = 30
