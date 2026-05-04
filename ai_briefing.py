@@ -555,21 +555,38 @@ def build_midday_briefing(
     ihsg_sesi1:         dict | None,
 ) -> str:
     """Full midday pipeline: generate → format → return Telegram string."""
+    now = datetime.now(_WIB).strftime("%H:%M WIB")
+
+    # Guard: if no Sesi 1 data at all, return a clear message instead of empty output
+    has_sesi1 = any(v is not None for v in sesi1_map.values())
+    if not has_sesi1:
+        logger.warning("build_midday_briefing: no Sesi 1 intraday data available")
+        return (
+            "<b>📊 PRE-SESI 2 UPDATE</b>\n"
+            f"<i>{now}</i>\n\n"
+            "⚠️ Data intraday Sesi 1 belum tersedia.\n"
+            "Pastikan dipanggil setelah Sesi 1 selesai (≥12:00 WIB)."
+        )
+
     briefing = generate_midday_briefing(morning_candidates, sesi1_map, ihsg_sesi1)
     if briefing is None:
-        # Rule-based fallback
+        # Rule-based fallback — Claude API unavailable
+        logger.warning("Midday briefing: falling back to rule-based output")
         lines = [
             "<b>📊 PRE-SESI 2 UPDATE</b>",
+            f"<i>{now} — evaluasi morning picks setelah Sesi 1</i>",
             "<i>(Claude API tidak tersedia — data mentah)</i>",
             "",
         ]
-        for r in morning_candidates[:5]:
+        for r in morning_candidates[:8]:
             sym = r["symbol"].replace(".JK", "")
             s1  = sesi1_map.get(r["symbol"]) or sesi1_map.get(sym)
             pct = s1.get("pct_change") if s1 else None
-            pct_str = f"{pct:+.2f}%" if pct is not None else "no data"
-            lines.append(f"• <b>{sym}</b> — Sesi 1: {pct_str}")
-        briefing = {"picks": [], "new_picks": [], "risks": [], "sesi1_summary": ""}
+            close = s1.get("close") if s1 else None
+            pct_str   = f"{pct:+.2f}%" if pct is not None else "—"
+            close_str = f"<code>{close:,.0f}</code>" if close is not None else "no data"
+            lines.append(f"• <b>{sym}</b> — Sesi 1 tutup: {close_str} ({pct_str})")
+        return "\n".join(lines)
 
     return format_midday_telegram(briefing, morning_candidates, sesi1_map)
 
