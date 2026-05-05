@@ -1,0 +1,232 @@
+2026-04-28T09:48:02.466868670Z [inf]  Starting Container
+2026-04-28T09:48:02.776046131Z [err]  2026-04-28 09:48:02,608 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:03.252400717Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:03.252407243Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:03.252408898Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:03.252414237Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:03.252414583Z [err]    jq.run_daily(
+2026-04-28T09:48:03.252420144Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:03.252420306Z [err]      return self.__run(
+2026-04-28T09:48:03.252425552Z [err]    jq.run_daily(
+2026-04-28T09:48:03.252428246Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:03.252431069Z [err]  2026-04-28 09:48:03,246 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:03.252432947Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:03.252436309Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:03.252437629Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:03.252441154Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:03.252443163Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:03.252446169Z [err]      main()
+2026-04-28T09:48:03.252448747Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:03.252451898Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:03.252456640Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:03.265120543Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:04.266018454Z [err]  2026-04-28 09:48:04,245 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:04.771287722Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:04.771288580Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:04.771292758Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:04.771296411Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:04.771299530Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:04.771301727Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:04.771307933Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:04.771310245Z [err]      return self.__run(
+2026-04-28T09:48:04.771314563Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:04.771319730Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:04.771320565Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:04.771325143Z [err]      main()
+2026-04-28T09:48:04.771335390Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:04.771338911Z [err]    jq.run_daily(
+2026-04-28T09:48:04.771341917Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:04.771344931Z [err]    jq.run_daily(
+2026-04-28T09:48:04.771348925Z [err]  2026-04-28 09:48:04,688 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:04.771603651Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:04.771609021Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:04.771613675Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:05.833409295Z [err]  2026-04-28 09:48:05,678 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:06.129601493Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:06.129601572Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:06.129607433Z [err]    jq.run_daily(
+2026-04-28T09:48:06.129610303Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:06.129612579Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:06.129615336Z [err]    jq.run_daily(
+2026-04-28T09:48:06.129618164Z [err]  2026-04-28 09:48:06,126 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:06.129621441Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:06.129624263Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:06.129626939Z [err]      main()
+2026-04-28T09:48:06.129629748Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:06.129632394Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:06.129635441Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:06.129641902Z [err]      return self.__run(
+2026-04-28T09:48:06.129644848Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:06.129647419Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:06.129650394Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:06.131062089Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:06.131065973Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:06.143975687Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:07.111259870Z [err]  2026-04-28 09:48:07,109 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:07.555290744Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:07.555297536Z [err]    jq.run_daily(
+2026-04-28T09:48:07.555301545Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:07.555305700Z [err]    jq.run_daily(
+2026-04-28T09:48:07.555309613Z [err]  2026-04-28 09:48:07,551 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:07.555314614Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:07.555318058Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:07.555322088Z [err]      main()
+2026-04-28T09:48:07.555326221Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:07.555330228Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:07.555333613Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:07.555337278Z [err]      return self.__run(
+2026-04-28T09:48:07.555341639Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:07.555345187Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:07.555348650Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:07.555352227Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:07.556865880Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:07.556869467Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:07.556872461Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:07.570348243Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:08.853923567Z [err]  2026-04-28 09:48:08,584 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:09.029327700Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:09.029334635Z [err]    jq.run_daily(
+2026-04-28T09:48:09.031304135Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:09.031309581Z [err]    jq.run_daily(
+2026-04-28T09:48:09.031313046Z [err]  2026-04-28 09:48:09,029 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:09.031318113Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:09.031321849Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:09.031325309Z [err]      main()
+2026-04-28T09:48:09.031328924Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:09.031332501Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:09.031336743Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:09.031340224Z [err]      return self.__run(
+2026-04-28T09:48:09.031344036Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:09.031347836Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:09.031350866Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:09.031353908Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:09.031356898Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:09.031360089Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:09.031363308Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:09.046684169Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:10.008174928Z [err]  2026-04-28 09:48:10,006 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:11.007299716Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:11.007303186Z [err]    jq.run_daily(
+2026-04-28T09:48:11.009133102Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:11.009142181Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:11.009145845Z [err]    jq.run_daily(
+2026-04-28T09:48:11.009148937Z [err]  2026-04-28 09:48:11,008 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:11.009151794Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:11.009154553Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:11.009157477Z [err]      main()
+2026-04-28T09:48:11.009160092Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:11.009162750Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:11.010751747Z [err]      return self.__run(
+2026-04-28T09:48:11.010755392Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:11.010758152Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:11.010760857Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:11.010763751Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:11.010766318Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:11.010768925Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:11.010771581Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:11.023254740Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:11.974051860Z [err]  2026-04-28 09:48:11,970 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:12.420931189Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:12.420938303Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:12.420942560Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:12.420949383Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:12.420958532Z [err]    jq.run_daily(
+2026-04-28T09:48:12.420963848Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:12.420967749Z [err]    jq.run_daily(
+2026-04-28T09:48:12.420971574Z [err]  2026-04-28 09:48:12,418 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:12.420975509Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:12.420979114Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:12.420982832Z [err]      main()
+2026-04-28T09:48:12.420986463Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:12.420990605Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:12.420996100Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:12.420999452Z [err]      return self.__run(
+2026-04-28T09:48:12.421002679Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:12.421006100Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:12.421009185Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:12.422604447Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:12.433550217Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:13.430239336Z [err]  2026-04-28 09:48:13,421 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:14.051741213Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:14.051749434Z [err]    jq.run_daily(
+2026-04-28T09:48:14.053742770Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:14.053749935Z [err]    jq.run_daily(
+2026-04-28T09:48:14.053753617Z [err]  2026-04-28 09:48:14,053 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:14.053756949Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:14.053760249Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:14.053763614Z [err]      main()
+2026-04-28T09:48:14.053767125Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:14.053770656Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:14.053774544Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:14.055297584Z [err]      return self.__run(
+2026-04-28T09:48:14.055302205Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:14.055309651Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:14.055320939Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:14.055324097Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:14.055327656Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:14.055330593Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:14.055333420Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:14.069536916Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:15.019214641Z [err]  2026-04-28 09:48:15,014 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:15.460781825Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:15.460784785Z [err]    jq.run_daily(
+2026-04-28T09:48:15.460787819Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:15.460790599Z [err]    jq.run_daily(
+2026-04-28T09:48:15.462682545Z [err]  2026-04-28 09:48:15,460 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:15.462689225Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:15.462693535Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:15.462697550Z [err]      main()
+2026-04-28T09:48:15.462701036Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:15.462704365Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:15.462708477Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:15.462711919Z [err]      return self.__run(
+2026-04-28T09:48:15.462717187Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:15.462721082Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:15.462724676Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:15.462728414Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:15.462732139Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:15.462737137Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:15.462740613Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:15.476024822Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:16.409793403Z [err]  2026-04-28 09:48:16,395 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:16.870478162Z [err]    jq.run_daily(
+2026-04-28T09:48:16.870486710Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:16.870493232Z [err]    jq.run_daily(
+2026-04-28T09:48:16.870497252Z [err]  2026-04-28 09:48:16,841 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:16.870501342Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:16.870506026Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:16.870511165Z [err]      main()
+2026-04-28T09:48:16.870516143Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:16.870520412Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:16.870524901Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:16.870528186Z [err]      return self.__run(
+2026-04-28T09:48:16.870531734Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:16.870534966Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:16.870538288Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:16.870541509Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:16.870617313Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:16.871171193Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:16.871174496Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:16.871178058Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:16.871180989Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited
+2026-04-28T09:48:17.887019126Z [err]  2026-04-28 09:48:17,798 [INFO] __main__: Starting Claustock IDX v2 (universe=IDX80)
+2026-04-28T09:48:18.243051539Z [err]  /app/main.py:48: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:18.243055950Z [err]    jq.run_daily(
+2026-04-28T09:48:18.244952290Z [err]  /app/main.py:59: PTBUserWarning: Prior to v20.0 the `days` parameter was not aligned to that of cron's weekday scheme. We recommend double checking if the passed value is correct.
+2026-04-28T09:48:18.244958169Z [err]    jq.run_daily(
+2026-04-28T09:48:18.244961444Z [err]      return self.__run(
+2026-04-28T09:48:18.244964425Z [err]  2026-04-28 09:48:18,243 [INFO] __main__: Jobs scheduled: EOD scan 16:30 WIB | Briefing 08:30 WIB
+2026-04-28T09:48:18.244969610Z [err]  Traceback (most recent call last):
+2026-04-28T09:48:18.244971103Z [err]             ^^^^^^^^^^^
+2026-04-28T09:48:18.244974256Z [err]    File "/app/main.py", line 80, in <module>
+2026-04-28T09:48:18.244975736Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 977, in __run
+2026-04-28T09:48:18.244979939Z [err]      main()
+2026-04-28T09:48:18.244982217Z [err]      loop = asyncio.get_event_loop()
+2026-04-28T09:48:18.244984577Z [err]    File "/app/main.py", line 76, in main
+2026-04-28T09:48:18.244989561Z [err]      app.run_polling(drop_pending_updates=True, allowed_updates=["message", "callback_query"])
+2026-04-28T09:48:18.244989633Z [err]             ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-28T09:48:18.244995067Z [err]    File "/app/.venv/lib/python3.11/site-packages/telegram/ext/_application.py", line 818, in run_polling
+2026-04-28T09:48:18.244995471Z [err]    File "/mise/installs/python/3.11.15/lib/python3.11/asyncio/events.py", line 681, in get_event_loop
+2026-04-28T09:48:18.244999713Z [err]      raise RuntimeError('There is no current event loop in thread %r.'
+2026-04-28T09:48:18.245003223Z [err]  RuntimeError: There is no current event loop in thread 'MainThread'.
+2026-04-28T09:48:18.257893273Z [err]  sys:1: RuntimeWarning: coroutine 'Updater.start_polling' was never awaited

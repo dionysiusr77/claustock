@@ -277,30 +277,8 @@ def _build_midday_briefing() -> str | None:
     prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in candidates}
     sesi1_map   = fetch_intraday_batch(symbols, prev_closes)
 
-    # IHSG intraday via chart/index — not the intraday endpoint (index codes unsupported there)
-    from invezgo_client import _chart_request, _parse_ohlcv
-    import pytz as _pytz
-    _wib = _pytz.timezone("Asia/Jakarta")
-    ihsg_sesi1 = None
-    try:
-        today = datetime.now().strftime("%Y-%m-%d")
-        raw = _chart_request("COMPOSITE", today, today, kind="index")
-        df = _parse_ohlcv(raw)
-        if not df.empty:
-            if df.index.tz is None:
-                df.index = df.index.tz_localize("UTC")
-            df.index = df.index.tz_convert(_wib)
-            sesi1_df = df.between_time("09:00", "12:00")
-            if not sesi1_df.empty:
-                ihsg_sesi1 = {
-                    "open":  float(sesi1_df["open"].iloc[0]),
-                    "high":  float(sesi1_df["high"].max()),
-                    "low":   float(sesi1_df["low"].min()),
-                    "close": float(sesi1_df["close"].iloc[-1]),
-                    "candles": len(sesi1_df),
-                }
-    except Exception:
-        logger.debug("IHSG Sesi 1 intraday unavailable")
+    # IHSG Sesi 1 — use get_intraday same as stocks (COMPOSITE is a valid code)
+    ihsg_sesi1 = fetch_intraday_sesi1("COMPOSITE", prev_close=None)
 
     text = build_midday_briefing(candidates, sesi1_map, ihsg_sesi1)
     if text:

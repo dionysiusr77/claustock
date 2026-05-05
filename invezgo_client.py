@@ -254,25 +254,28 @@ def fetch_intraday_sesi1(symbol: str, prev_close: float | None = None) -> dict |
 
     Returns:
       { open, high, low, close, volume,
-        pct_change,          # vs prev_close (D-1) if provided
-        vs_entry,            # close vs prev_close (same if no prev_close)
-        candles: int }       # number of intraday candles in Sesi 1
+        pct_change,   # vs prev_close (D-1) if provided
+        candles: int  # number of intraday candles in Sesi 1
+      }
     """
     today = datetime.now().strftime("%Y-%m-%d")
     try:
         raw = _get_client().analysis.get_intraday(code=_code(symbol), date=today)
     except Exception as e:
-        logger.debug("get_intraday failed for %s: %s", symbol, e)
+        logger.warning("get_intraday failed for %s: %s", symbol, e)
         return None
 
     df = _parse_ohlcv(raw)
     if df.empty:
+        logger.debug("get_intraday: empty OHLCV for %s (raw type=%s len=%s)",
+                     symbol, type(raw).__name__, len(raw) if raw else 0)
         return None
 
-    # Localise index to WIB for time-of-day filtering
+    # Invezgo returns WIB (Asia/Jakarta) timestamps — localise as WIB if naive
     if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC")
-    df.index = df.index.tz_convert(_WIB)
+        df.index = df.index.tz_localize("Asia/Jakarta")
+    else:
+        df.index = df.index.tz_convert(_WIB)
 
     sesi1 = df.between_time(_SESI1_START, _SESI1_END)
     if sesi1.empty:
@@ -504,23 +507,12 @@ def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
         logger.warning("get_top_foreign failed for %s: %s: %s", date_str, type(e).__name__, e)
         return None
 
-    # Log response shape once to verify field names
-    logger.warning("get_top_foreign raw type=%s keys=%s sample=%s",
-                   type(raw).__name__,
-                   list(raw.keys()) if isinstance(raw, dict) else "n/a",
-                   str(raw)[:300])
-
     if not isinstance(raw, dict):
+        logger.debug("get_top_foreign: unexpected response type %s", type(raw).__name__)
         return None
 
     accum_rows = raw.get("accum") or []
     dist_rows  = raw.get("dist")  or []
-
-    # Log first row of each to see field names
-    if accum_rows:
-        logger.warning("accum[0] keys: %s", list(accum_rows[0].keys()) if isinstance(accum_rows[0], dict) else accum_rows[0])
-    if dist_rows:
-        logger.warning("dist[0] keys: %s", list(dist_rows[0].keys()) if isinstance(dist_rows[0], dict) else dist_rows[0])
 
     total_buy = total_sell = 0.0
     for row in accum_rows:
