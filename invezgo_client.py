@@ -259,13 +259,6 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
 
 # ── Intraday (Sesi 1 snapshot) ────────────────────────────────────────────────
 
-import pytz as _pytz
-_WIB = _pytz.timezone("Asia/Jakarta")
-
-# Sesi 1: 09:00–12:00 WIB
-_SESI1_START = "09:00"
-_SESI1_END   = "12:00"
-
 
 def fetch_intraday_sesi1(
     symbol: str,
@@ -288,46 +281,32 @@ def fetch_intraday_sesi1(
         logger.warning("intraday request failed for %s: %s", symbol, e)
         return None
 
-    df = _parse_ohlcv(raw)
-    if df.empty:
-        # Log a sample of the raw response so we can see the actual field names
-        sample = raw[:1] if isinstance(raw, list) and raw else raw
-        logger.warning("intraday parse empty for %s — raw type=%s sample=%s",
-                       symbol, type(raw).__name__, str(sample)[:200])
+    # The endpoint returns a single aggregate snapshot dict, not a candle series.
+    # Fields: open, high, low, close, avg, volume, freq, value, prev, bid_price, ...
+    if not isinstance(raw, dict) or "close" not in raw:
+        logger.warning("intraday unexpected response for %s: %s", symbol, str(raw)[:150])
         return None
 
-    # Invezgo returns WIB (Asia/Jakarta) timestamps — localise as WIB if naive
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("Asia/Jakarta")
-    else:
-        df.index = df.index.tz_convert(_WIB)
+    close_s1 = float(raw["close"])
+    open_s1  = float(raw.get("open")   or close_s1)
+    high_s1  = float(raw.get("high")   or close_s1)
+    low_s1   = float(raw.get("low")    or close_s1)
+    vol_s1   = int(raw.get("volume")   or 0)
+    freq     = int(raw.get("freq")     or 0)   # number of transactions
 
-    sesi1 = df.between_time(_SESI1_START, _SESI1_END)
-    if sesi1.empty:
-        logger.warning("intraday Sesi 1 window empty for %s — index range: %s to %s",
-                       symbol,
-                       df.index[0].strftime("%H:%M %Z") if len(df) else "n/a",
-                       df.index[-1].strftime("%H:%M %Z") if len(df) else "n/a")
-        return None
-
-    open_s1  = float(sesi1["open"].iloc[0])
-    high_s1  = float(sesi1["high"].max())
-    low_s1   = float(sesi1["low"].min())
-    close_s1 = float(sesi1["close"].iloc[-1])
-    vol_s1   = int(sesi1["volume"].sum())
-
-    pct_chg = None
-    if prev_close and prev_close > 0:
-        pct_chg = round((close_s1 - prev_close) / prev_close * 100, 2)
+    # Use API's own prev field if caller didn't supply prev_close
+    prev = prev_close or float(raw.get("prev") or 0)
+    pct_chg = round((close_s1 - prev) / prev * 100, 2) if prev > 0 else None
 
     return {
-        "open":       round(open_s1, 0),
-        "high":       round(high_s1, 0),
-        "low":        round(low_s1, 0),
-        "close":      round(close_s1, 0),
+        "open":       round(open_s1),
+        "high":       round(high_s1),
+        "low":        round(low_s1),
+        "close":      round(close_s1),
         "volume":     vol_s1,
+        "freq":       freq,
         "pct_change": pct_chg,
-        "candles":    len(sesi1),
+        "candles":    freq,
     }
 
 
