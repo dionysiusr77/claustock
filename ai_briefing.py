@@ -125,6 +125,44 @@ def _top_reasons(result: dict) -> list[str]:
     return out[:6]
 
 
+# ── JSON extraction helper ───────────────────────────────────────────────────
+
+def _parse_claude_json(raw: str, label: str = "") -> dict | None:
+    """
+    Robustly extract and parse a JSON object from Claude's raw response.
+    Handles: markdown fences, leading/trailing prose, trailing commas.
+    """
+    text = raw.strip()
+
+    # Strip ```json ... ``` fences
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                text = part
+                break
+
+    # Find outermost { ... } block (handles prose before/after JSON)
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        logger.error("%s no JSON object found in response: %s", label, text[:200])
+        return None
+    text = text[start:end + 1]
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        # Log ~100 chars around the error position to show the problematic token
+        pos   = e.pos
+        snip  = text[max(0, pos - 60):pos + 60]
+        logger.error("%s invalid JSON at char %d — …%s… | %s", label, pos, snip, e)
+        return None
+
+
 # ── API call ──────────────────────────────────────────────────────────────────
 
 def generate_briefing(scan_data: dict, breadth_summary: dict) -> dict | None:
@@ -147,27 +185,17 @@ def generate_briefing(scan_data: dict, breadth_summary: dict) -> dict | None:
             ],
             messages=[{"role": "user", "content": user_prompt}],
         )
-        raw = response.content[0].text.strip()
-
-        # Strip markdown code fences if Claude wraps with ```json
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
-
-        briefing = json.loads(raw)
-        logger.info(
-            "Briefing generated: %d picks, %d watchlist, cache_tokens=%s",
-            len(briefing.get("picks", [])),
-            len(briefing.get("watchlist", [])),
-            getattr(response.usage, "cache_read_input_tokens", "n/a"),
-        )
+        raw      = response.content[0].text
+        briefing = _parse_claude_json(raw, label="Morning briefing:")
+        if briefing:
+            logger.info(
+                "Briefing generated: %d picks, %d watchlist, cache_tokens=%s",
+                len(briefing.get("picks", [])),
+                len(briefing.get("watchlist", [])),
+                getattr(response.usage, "cache_read_input_tokens", "n/a"),
+            )
         return briefing
 
-    except json.JSONDecodeError as e:
-        logger.error("Claude returned invalid JSON: %s", e)
-        return None
     except Exception as e:
         logger.error("Claude API call failed: %s", e)
         return None
@@ -451,15 +479,8 @@ def generate_midday_briefing(
             ],
             messages=[{"role": "user", "content": user_prompt}],
         )
-        raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
-    except json.JSONDecodeError as e:
-        logger.error("Midday briefing: Claude returned invalid JSON: %s", e)
-        return None
+        raw = response.content[0].text
+        return _parse_claude_json(raw, label="Midday briefing:")
     except Exception as e:
         logger.error("Midday briefing: Claude API call failed: %s", e)
         return None
