@@ -290,8 +290,10 @@ def fetch_intraday_sesi1(
 
     df = _parse_ohlcv(raw)
     if df.empty:
-        logger.debug("get_intraday: empty OHLCV for %s (raw type=%s len=%s)",
-                     symbol, type(raw).__name__, len(raw) if raw else 0)
+        # Log a sample of the raw response so we can see the actual field names
+        sample = raw[:1] if isinstance(raw, list) and raw else raw
+        logger.warning("intraday parse empty for %s — raw type=%s sample=%s",
+                       symbol, type(raw).__name__, str(sample)[:200])
         return None
 
     # Invezgo returns WIB (Asia/Jakarta) timestamps — localise as WIB if naive
@@ -302,6 +304,10 @@ def fetch_intraday_sesi1(
 
     sesi1 = df.between_time(_SESI1_START, _SESI1_END)
     if sesi1.empty:
+        logger.warning("intraday Sesi 1 window empty for %s — index range: %s to %s",
+                       symbol,
+                       df.index[0].strftime("%H:%M %Z") if len(df) else "n/a",
+                       df.index[-1].strftime("%H:%M %Z") if len(df) else "n/a")
         return None
 
     open_s1  = float(sesi1["open"].iloc[0])
