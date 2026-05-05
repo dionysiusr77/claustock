@@ -199,6 +199,7 @@ def _intraday_request(code: str, kind: str = "stock") -> list:
     url  = f"{_INVEZGO_BASE}/analysis/{path}/{code}"
     resp = _req.get(
         url,
+        params={"market": "RG"},
         headers={"Authorization": f"Bearer {config.INVEZGO_API_KEY}"},
         timeout=10,
     )
