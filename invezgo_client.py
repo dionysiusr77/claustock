@@ -190,12 +190,12 @@ def _chart_request(code: str, from_date: str, to_date: str, kind: str = "stock")
 
 def _intraday_request(code: str, kind: str = "stock") -> list:
     """
-    GET /analysis/intraday/{code}       for stocks
+    GET /analysis/intraday-data/{code}  for stocks
     GET /analysis/intraday-index/{code} for indices (e.g. COMPOSITE)
     Returns today's intraday candles or raises on HTTP error.
     """
     import requests as _req
-    path = "intraday-index" if kind == "index" else "intraday"
+    path = "intraday-index" if kind == "index" else "intraday-data"
     url  = f"{_INVEZGO_BASE}/analysis/{path}/{code}"
     resp = _req.get(
         url,
