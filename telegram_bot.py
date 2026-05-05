@@ -391,6 +391,12 @@ async def job_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
             await broadcast(context.bot, "⚠️ Morning briefing gagal dibuat. Cek log.")
 
 
+# ── Global error handler ─────────────────────────────────────────────────────
+
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Unhandled exception (update=%s): %s", update, context.error, exc_info=context.error)
+
+
 # ── Startup notification ──────────────────────────────────────────────────────
 
 async def _on_startup(app: Application) -> None:
@@ -422,5 +428,6 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("midday",   cmd_midday))
     app.add_handler(CommandHandler("scan",     cmd_scan))
     app.add_handler(CommandHandler("pick",     cmd_pick))
+    app.add_error_handler(_error_handler)
 
     return app
