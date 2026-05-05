@@ -188,6 +188,24 @@ def _chart_request(code: str, from_date: str, to_date: str, kind: str = "stock")
     return resp.json()
 
 
+def _intraday_request(code: str, kind: str = "stock") -> list:
+    """
+    GET /analysis/intraday/{code}       for stocks
+    GET /analysis/intraday-index/{code} for indices (e.g. COMPOSITE)
+    Returns today's intraday candles or raises on HTTP error.
+    """
+    import requests as _req
+    path = "intraday-index" if kind == "index" else "intraday"
+    url  = f"{_INVEZGO_BASE}/analysis/{path}/{code}"
+    resp = _req.get(
+        url,
+        headers={"Authorization": f"Bearer {config.INVEZGO_API_KEY}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ── Daily OHLCV ───────────────────────────────────────────────────────────────
 
 def fetch_daily(symbol: str, days: int = 365, min_rows: int = 60) -> pd.DataFrame | None:
@@ -248,21 +266,25 @@ _SESI1_START = "09:00"
 _SESI1_END   = "12:00"
 
 
-def fetch_intraday_sesi1(symbol: str, prev_close: float | None = None) -> dict | None:
+def fetch_intraday_sesi1(
+    symbol: str,
+    prev_close: float | None = None,
+    kind: str = "stock",
+) -> dict | None:
     """
     Fetch Sesi 1 (09:00–12:00 WIB) intraday snapshot for today.
 
+    kind: "stock" for equities, "index" for indices (e.g. COMPOSITE)
     Returns:
       { open, high, low, close, volume,
         pct_change,   # vs prev_close (D-1) if provided
         candles: int  # number of intraday candles in Sesi 1
       }
     """
-    today = datetime.now().strftime("%Y-%m-%d")
     try:
-        raw = _get_client().analysis.get_intraday(code=_code(symbol), date=today)
+        raw = _intraday_request(_code(symbol), kind=kind)
     except Exception as e:
-        logger.warning("get_intraday failed for %s: %s", symbol, e)
+        logger.warning("intraday request failed for %s: %s", symbol, e)
         return None
 
     df = _parse_ohlcv(raw)
@@ -494,35 +516,77 @@ def fetch_foreign_flow_stock(symbol: str, lookback_days: int = 5) -> dict | None
 
 def fetch_foreign_flow_market(date_str: str | None = None) -> dict | None:
     """
-    Aggregate market foreign net flow for a given date.
-    Uses get_top_foreign() and sums net values across all stocks.
+    Aggregate market foreign net flow.
+    Uses GET /analysis/top/foreign — sums buy/sell across returned rows.
     """
+    import requests as _req
+
     if not date_str:
         dates = _last_n_trading_dates(1)
         date_str = dates[0] if dates else datetime.now().strftime("%Y-%m-%d")
 
+    url = f"{_INVEZGO_BASE}/analysis/top/foreign"
     try:
-        raw = _get_client().analysis.get_top_foreign(date=date_str)
+        resp = _req.get(
+            url,
+            params={"date": date_str},
+            headers={"Authorization": f"Bearer {config.INVEZGO_API_KEY}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
     except Exception as e:
-        logger.warning("get_top_foreign failed for %s: %s: %s", date_str, type(e).__name__, e)
+        logger.warning("fetch_foreign_flow_market failed for %s: %s", date_str, e)
         return None
 
-    if not isinstance(raw, dict):
-        logger.debug("get_top_foreign: unexpected response type %s", type(raw).__name__)
+    # Unwrap envelope — could be list, or dict with buy/sell/accum/dist keys
+    rows: list = []
+    if isinstance(raw, list):
+        rows = raw
+    elif isinstance(raw, dict):
+        # Try common envelope keys; merge buy and sell sides
+        rows = (
+            (raw.get("buy") or raw.get("accum") or []) +
+            (raw.get("sell") or raw.get("dist") or [])
+        )
+        if not rows:
+            # Flat dict with aggregate totals
+            buy  = float(raw.get("foreignBuy")  or raw.get("buyVal")  or raw.get("buy_val")  or 0)
+            sell = float(raw.get("foreignSell") or raw.get("sellVal") or raw.get("sell_val") or 0)
+            net  = float(raw.get("foreignNet")  or raw.get("netVal")  or raw.get("net_val")  or (buy - sell))
+            logger.info("Foreign market flow %s: net %.1fB IDR", date_str, net / 1e9)
+            return {
+                "date":         date_str,
+                "buy_val_idr":  buy,
+                "sell_val_idr": sell,
+                "net_val_idr":  net,
+                "direction":    "BUY" if net > 0 else ("SELL" if net < 0 else "NEUTRAL"),
+            }
+
+    if not rows:
+        logger.debug("fetch_foreign_flow_market: empty response for %s", date_str)
         return None
 
-    accum_rows = raw.get("accum") or []
-    dist_rows  = raw.get("dist")  or []
-
+    # Sum across all rows
     total_buy = total_sell = 0.0
-    for row in accum_rows:
-        if isinstance(row, dict):
-            total_buy += float(row.get("foreignBuy") or row.get("netVal") or 0)
-    for row in dist_rows:
-        if isinstance(row, dict):
-            total_sell += float(row.get("foreignSell") or row.get("netVal") or 0)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        buy  = float(row.get("foreignBuy")  or row.get("buyVal")  or row.get("buy_val")  or 0)
+        sell = float(row.get("foreignSell") or row.get("sellVal") or row.get("sell_val") or 0)
+        net  = float(row.get("foreignNet")  or row.get("netVal")  or row.get("net_val")  or 0)
+        if net != 0:
+            if net > 0:
+                total_buy += net
+            else:
+                total_sell += abs(net)
+        else:
+            total_buy  += buy
+            total_sell += sell
 
     net = total_buy - total_sell
+    logger.info("Foreign market flow %s: buy %.1fB sell %.1fB net %.1fB IDR",
+                date_str, total_buy / 1e9, total_sell / 1e9, net / 1e9)
     return {
         "date":         date_str,
         "buy_val_idr":  total_buy,

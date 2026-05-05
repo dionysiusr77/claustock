@@ -277,8 +277,8 @@ def _build_midday_briefing() -> str | None:
     prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in candidates}
     sesi1_map   = fetch_intraday_batch(symbols, prev_closes)
 
-    # IHSG Sesi 1 — use get_intraday same as stocks (COMPOSITE is a valid code)
-    ihsg_sesi1 = fetch_intraday_sesi1("COMPOSITE", prev_close=None)
+    # IHSG Sesi 1 — uses /analysis/intraday-index/COMPOSITE endpoint
+    ihsg_sesi1 = fetch_intraday_sesi1("COMPOSITE", prev_close=None, kind="index")
 
     text = build_midday_briefing(candidates, sesi1_map, ihsg_sesi1)
     if text:
