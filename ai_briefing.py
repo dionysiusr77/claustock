@@ -153,12 +153,28 @@ def _parse_claude_json(raw: str, label: str = "") -> dict | None:
         return None
     text = text[start:end + 1]
 
+    import re as _re
+
+    # Fix 1: trailing commas before } or ] (Claude emits JS-style JSON)
+    text = _re.sub(r",\s*([}\]])", r"\1", text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Fix 2: literal newlines/tabs inside string values (must be escaped in JSON)
+    # Replace any bare \n or \t that sits inside a quoted string with a space.
+    # Safe to apply globally — whitespace between tokens is irrelevant to json.loads.
+    text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    # Re-apply trailing comma fix after whitespace collapse
+    text = _re.sub(r",\s*([}\]])", r"\1", text)
+
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        # Log ~100 chars around the error position to show the problematic token
-        pos   = e.pos
-        snip  = text[max(0, pos - 60):pos + 60]
+        pos  = e.pos
+        snip = text[max(0, pos - 60):pos + 60]
         logger.error("%s invalid JSON at char %d — …%s… | %s", label, pos, snip, e)
         return None
 
