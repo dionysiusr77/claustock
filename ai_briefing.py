@@ -271,9 +271,10 @@ _SENTIMENT_EMOJI = {
 
 
 def format_telegram(
-    briefing:       dict,
-    scan_data:      dict,
+    briefing:        dict,
+    scan_data:       dict,
     breadth_summary: dict,
+    pipeline_map:    dict | None = None,
 ) -> str:
     """
     Format briefing JSON into a Telegram-ready HTML string.
@@ -354,8 +355,18 @@ def format_telegram(
             f"   Hold: <i>{html.escape(str(pick.get('hold_duration', '—')))}</i>"
             + (f" | RSI {rsi:.1f}" if rsi else ""),
             f"   ⚠️ <i>{html.escape(pick.get('key_risk', ''))}</i>",
-            "",
         ]
+
+        # Inject pipeline block if available for this symbol
+        if pipeline_map:
+            from agents import format_pipeline_block
+            pr = pipeline_map.get(sym) or pipeline_map.get(sym.replace(".JK", ""))
+            if pr:
+                block = format_pipeline_block(pr)
+                if block:
+                    lines.append(block)
+
+        lines.append("")
 
     # ── Watchlist ─────────────────────────────────────────────────────────────
     watchlist = briefing.get("watchlist", [])
@@ -630,7 +641,11 @@ def build_midday_briefing(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def build_briefing(scan_data: dict, breadth_summary: dict) -> str:
+def build_briefing(
+    scan_data:       dict,
+    breadth_summary: dict,
+    pipeline_map:    dict | None = None,
+) -> str:
     """
     Full pipeline: generate → format → return Telegram string.
     Falls back to rule-based if Claude API fails.
@@ -640,4 +655,4 @@ def build_briefing(scan_data: dict, breadth_summary: dict) -> str:
         logger.warning("Falling back to rule-based briefing")
         briefing = _rule_based_briefing(scan_data, breadth_summary)
 
-    return format_telegram(briefing, scan_data, breadth_summary)
+    return format_telegram(briefing, scan_data, breadth_summary, pipeline_map)

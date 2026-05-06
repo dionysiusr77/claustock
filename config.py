@@ -80,6 +80,7 @@ CAPITAL_IDR          = int(os.getenv("CAPITAL_IDR", "10000000"))
 MAX_POSITIONS        = int(os.getenv("MAX_POSITIONS", "5"))
 DAILY_LOSS_LIMIT_PCT = float(os.getenv("DAILY_LOSS_LIMIT_PCT", "3.0"))
 MAX_RISK_PER_TRADE   = 0.02   # 2% of capital max risk per trade
+IDX_MAX_LOTS         = int(os.getenv("IDX_MAX_LOTS", "5"))   # max lots per AI pipeline suggestion
 
 # ── Universe ──────────────────────────────────────────────────────────────────
 UNIVERSE = os.getenv("UNIVERSE", "IDX80")   # LQ45 | IDX80 | COMPOSITE

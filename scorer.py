@@ -372,12 +372,13 @@ def classify_setup(snap: dict, layer_scores: dict) -> str:
 # ── Main scorer ───────────────────────────────────────────────────────────────
 
 def score_stock(
-    symbol:  str,
-    snap:    dict,
-    df,                        # full indicator DataFrame for OBV + pattern detection
-    foreign: dict | None,
-    breadth: dict | None,
-    sector:  str | None = None,
+    symbol:          str,
+    snap:            dict,
+    df,                            # full indicator DataFrame for OBV + pattern detection
+    foreign:         dict | None,
+    breadth:         dict | None,
+    sector:          str | None = None,
+    pipeline_result: dict | None = None,
 ) -> dict:
     """
     Full 6-layer score for one stock.
@@ -391,6 +392,7 @@ def score_stock(
         bearish_warnings: list[str],
         trade_levels: {entry, target, stop_loss, target_pct, sl_pct, rr} | None,
         snapshot: snap,
+        analysis_score, sim_score, pipeline_ok,
     }
     """
     df_tail20 = df.tail(20) if df is not None and len(df) >= 20 else None
@@ -417,7 +419,16 @@ def score_stock(
     bear_pattern_penalty = -5 if bear_pats else 0
 
     raw_total = t_score + m_score + v_score + p_score + f_score + b_score
-    total     = max(0, min(100, raw_total + div_modifier + bear_pattern_penalty))
+
+    analysis_bonus = 0
+    sim_bonus      = 0
+    if pipeline_result and pipeline_result.get("pipeline_ok"):
+        analysis_bonus = (pipeline_result.get("analysis") or {}).get("analysis_score", 0)
+        sim_bonus      = (pipeline_result.get("simulation") or {}).get("sim_score", 0)
+
+    total = max(0, min(100, raw_total + div_modifier + bear_pattern_penalty))
+    # Pipeline bonuses are additive and can push total above 100
+    total = total + analysis_bonus + sim_bonus
 
     layer_scores = {
         "trend":    t_score,
@@ -457,16 +468,19 @@ def score_stock(
         bearish_warnings.append(f"RSI divergence: {div}")
 
     return {
-        "symbol":          symbol,
-        "total_score":     total,
-        "verdict":         verdict,
-        "setup":           setup,
-        "divergence":      div,
-        "div_modifier":    div_modifier,
-        "layer_scores":    layer_scores,
-        "reasons":         reasons,
+        "symbol":           symbol,
+        "total_score":      total,
+        "verdict":          verdict,
+        "setup":            setup,
+        "divergence":       div,
+        "div_modifier":     div_modifier,
+        "layer_scores":     layer_scores,
+        "reasons":          reasons,
         "bearish_warnings": bearish_warnings,
-        "trade_levels":    trade_levels,
-        "snapshot":        snap,
-        "foreign":         foreign,   # raw foreign flow dict for briefing prompt
+        "trade_levels":     trade_levels,
+        "snapshot":         snap,
+        "foreign":          foreign,   # raw foreign flow dict for briefing prompt
+        "analysis_score":   analysis_bonus,
+        "sim_score":        sim_bonus,
+        "pipeline_ok":      bool(pipeline_result and pipeline_result.get("pipeline_ok")),
     }

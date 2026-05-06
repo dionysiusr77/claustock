@@ -245,6 +245,7 @@ def _run_full_scan() -> dict:
 def _build_briefing(scan_data: dict) -> str:
     from market_breadth import build_breadth_summary
     from ai_briefing import build_briefing
+    from agents import run_briefing_pipeline
     from firestore_client import save_scan, save_briefing
 
     breadth_summary = build_breadth_summary(
@@ -252,7 +253,43 @@ def _build_briefing(scan_data: dict) -> str:
         scan_data.get("all_scored") or scan_data.get("candidates", []),
         scan_data.get("foreign_market"),
     )
-    text = build_briefing(scan_data, breadth_summary)
+
+    # Build market context from available breadth data
+    ihsg_data  = (scan_data.get("market") or {}).get("IHSG") or {}
+    market_ctx = {
+        "ihsg_change":    ihsg_data.get("change_pct", 0),
+        "wall_st_change": 0,
+        "usd_idr":        "—",
+        "macro_note":     "",
+    }
+
+    # Run 3-agent pipeline for each candidate, attach results, re-rank
+    pipeline_map: dict[str, dict] = {}
+    candidates = scan_data.get("candidates", [])
+    for cand in candidates:
+        sym = cand["symbol"]
+        try:
+            pr = run_briefing_pipeline(
+                symbol     = sym,
+                score_data = cand,
+                news_raw   = [],
+                market_ctx = market_ctx,
+            )
+            cand["pipeline_result"] = pr
+            pipeline_map[sym]                    = pr
+            pipeline_map[sym.replace(".JK", "")] = pr
+            if pr["pipeline_ok"] and pr["conclusion"]:
+                cand["final_score"] = pr["conclusion"]["final_score"]
+        except Exception:
+            logger.exception("Pipeline failed for %s — skipping", sym)
+
+    # Re-sort by pipeline final_score when available, fall back to total_score
+    candidates.sort(
+        key=lambda c: c.get("final_score") or c.get("total_score", 0),
+        reverse=True,
+    )
+
+    text = build_briefing(scan_data, breadth_summary, pipeline_map)
     save_scan(scan_data)
     save_briefing(text)
     return text
@@ -373,7 +410,10 @@ async def job_midday_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def job_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Morning briefing delivery at 08:30 WIB."""
+    """Morning briefing delivery at 08:30 WIB.
+    If a fresh scan is triggered, _build_briefing() runs the 3-agent pipeline
+    (agents.run_briefing_pipeline) for each candidate before formatting.
+    """
     logger.info("Morning briefing job triggered")
     from firestore_client import load_latest_briefing
     text = load_latest_briefing()
