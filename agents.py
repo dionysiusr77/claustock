@@ -12,8 +12,10 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 
 import anthropic
+import pytz
 
 import config
 
@@ -575,3 +577,372 @@ def format_pipeline_block(result: dict) -> str:
     lines.append(f"    ⚠️ Peringatan: {peringatan}")
 
     return "\n".join(lines)
+
+
+# ── Standalone /analyze formatter ─────────────────────────────────────────────
+
+def format_analyze_message(pipeline_result: dict, score_data: dict) -> str:
+    """
+    Full standalone Telegram HTML message for the /analyze command.
+    Wraps format_pipeline_block() with a header row.
+    """
+    sym   = pipeline_result.get("symbol", "")
+    code  = sym.replace(".JK", "")
+    snap  = score_data.get("snapshot", {})
+    close = snap.get("close")
+    rsi   = snap.get("rsi")
+
+    conclusion = pipeline_result.get("conclusion") or {}
+    score = conclusion.get("final_score") or score_data.get("total_score", "—")
+
+    close_str = f"<code>{close:,.0f}</code>  RSI: {rsi:.1f}" if close and rsi else ""
+
+    header = [
+        f"<b>🤖 ANALISA 3-AGEN: {code}</b>  <i>(skor {score})</i>",
+        close_str,
+        "",
+    ]
+
+    block = format_pipeline_block(pipeline_result)
+    return "\n".join(l for l in header if l is not None) + "\n" + block
+
+
+# ── Multi-timeframe context ───────────────────────────────────────────────────
+
+def build_timeframe_ctx(df_ind) -> dict:
+    """Compute weekly and monthly trend/range context from daily indicator DataFrame."""
+    try:
+        import pandas as pd
+
+        ohlc = df_ind[["open", "high", "low", "close"]].copy()
+
+        # Weekly (last 12 weeks)
+        weekly = ohlc.resample("W").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}
+        ).dropna().tail(12)
+        w_trend = "N/A"
+        if len(weekly) >= 4:
+            w_trend = (
+                "UPTREND"   if weekly["close"].iloc[-1] > weekly["close"].iloc[-4]
+                else "DOWNTREND" if weekly["close"].iloc[-1] < weekly["close"].iloc[-4]
+                else "SIDEWAYS"
+            )
+
+        # Monthly (last 6 months) — try "ME" (pandas >=2.2) then fall back to "M"
+        monthly = pd.DataFrame()
+        for freq in ("ME", "MS", "M"):
+            try:
+                monthly = ohlc.resample(freq).agg(
+                    {"open": "first", "high": "max", "low": "min", "close": "last"}
+                ).dropna().tail(6)
+                break
+            except Exception:
+                continue
+        m_trend = "N/A"
+        if len(monthly) >= 3:
+            m_trend = (
+                "UPTREND"   if monthly["close"].iloc[-1] > monthly["close"].iloc[-3]
+                else "DOWNTREND" if monthly["close"].iloc[-1] < monthly["close"].iloc[-3]
+                else "SIDEWAYS"
+            )
+
+        return {
+            "weekly_high":   float(weekly["high"].max())  if len(weekly) else None,
+            "weekly_low":    float(weekly["low"].min())   if len(weekly) else None,
+            "weekly_trend":  w_trend,
+            "monthly_high":  float(monthly["high"].max()) if len(monthly) else None,
+            "monthly_low":   float(monthly["low"].min())  if len(monthly) else None,
+            "monthly_trend": m_trend,
+        }
+    except Exception as e:
+        logger.debug("build_timeframe_ctx error: %s", e)
+        return {}
+
+
+def build_sr_levels(df_ind) -> dict:
+    """Compute support/resistance from rolling-period highs and lows."""
+    try:
+        high  = df_ind["high"]
+        low   = df_ind["low"]
+        close = df_ind["close"]
+        last  = float(close.iloc[-1])
+
+        r20 = float(high.tail(20).max())
+        s20 = float(low.tail(20).min())
+        r60 = float(high.tail(60).max())
+        s60 = float(low.tail(60).min())
+
+        # Sort by proximity to current price; exclude levels equal to current price
+        resistances = sorted(
+            [x for x in (r20, r60) if x > last * 1.001],
+            key=lambda x: x - last,
+        )
+        supports = sorted(
+            [x for x in (s20, s60) if x < last * 0.999],
+            key=lambda x: last - x,
+        )
+
+        return {
+            "support_1":    supports[0]    if len(supports) > 0 else s20,
+            "support_2":    supports[1]    if len(supports) > 1 else s60,
+            "resistance_1": resistances[0] if len(resistances) > 0 else r20,
+            "resistance_2": resistances[1] if len(resistances) > 1 else r60,
+        }
+    except Exception as e:
+        logger.debug("build_sr_levels error: %s", e)
+        return {}
+
+
+# ── Research Agent (Sonnet) ───────────────────────────────────────────────────
+
+_RESEARCH_SYSTEM = (
+    "Kamu adalah analis saham profesional IDX Indonesia. "
+    "Tugasmu: laporan riset komprehensif 5 bagian untuk satu emiten. "
+    "Gabungkan data teknikal aktual yang diberikan dengan pengetahuanmu "
+    "tentang fundamental, valuasi, dan sentimen emiten tersebut. "
+    "Tandai jika data fundamental mungkin sudah kadaluarsa. "
+    "Respond only in valid JSON."
+)
+
+
+def run_research_agent(
+    symbol:     str,
+    score_data: dict,
+    tf_ctx:     dict,
+    sr_levels:  dict,
+    market_ctx: dict,
+) -> dict | None:
+    snap   = score_data.get("snapshot", {})
+    layers = score_data.get("layer_scores", {})
+    ff_raw = score_data.get("foreign") or {}
+    levels = score_data.get("trade_levels") or {}
+    price  = snap.get("close", 0) or 0
+    code   = symbol.replace(".JK", "")
+
+    def _p(v) -> str:
+        return f"{v:,.0f}" if isinstance(v, (int, float)) and v else "N/A"
+
+    user_prompt = (
+        f"Buat laporan riset komprehensif untuk saham <b>{code}</b> (IDX).\n\n"
+        f"== DATA AKTUAL (dari market data) ==\n\n"
+        f"HARGA & TEKNIKAL HARIAN:\n"
+        f"- Harga: Rp {price:,.0f}\n"
+        f"- RSI (14): {snap.get('rsi', 'N/A')}\n"
+        f"- MACD: {_macd_status(snap)}\n"
+        f"- BB Position: {_bb_position(snap)}\n"
+        f"- MA Trend: {_ma_trend(snap)}\n"
+        f"- Volume Ratio: {snap.get('vol_ratio', 'N/A')}x\n"
+        f"- Divergence: {snap.get('divergence', 'NONE')}\n"
+        f"- 52W High: Rp {_p(snap.get('high_52w'))} | Low: Rp {_p(snap.get('low_52w'))}\n"
+        f"- % dari 52W High: {snap.get('pct_from_52w_high', 'N/A')}%\n\n"
+        f"MULTI-TIMEFRAME:\n"
+        f"- Weekly (12W): Tren {tf_ctx.get('weekly_trend','N/A')} | "
+        f"High Rp {_p(tf_ctx.get('weekly_high'))} | Low Rp {_p(tf_ctx.get('weekly_low'))}\n"
+        f"- Monthly (6M): Tren {tf_ctx.get('monthly_trend','N/A')} | "
+        f"High Rp {_p(tf_ctx.get('monthly_high'))} | Low Rp {_p(tf_ctx.get('monthly_low'))}\n\n"
+        f"SUPPORT & RESISTANCE:\n"
+        f"- Support 1: Rp {_p(sr_levels.get('support_1'))} | Support 2: Rp {_p(sr_levels.get('support_2'))}\n"
+        f"- Resistance 1: Rp {_p(sr_levels.get('resistance_1'))} | Resistance 2: Rp {_p(sr_levels.get('resistance_2'))}\n\n"
+        f"FOREIGN FLOW:\n"
+        f"- Arah: {ff_raw.get('direction','NEUTRAL')} | "
+        f"Net: Rp {abs(ff_raw.get('net_val_idr',0))/1e9:.1f}B IDR | "
+        f"Konsekutif: {ff_raw.get('consecutive_buy_days',0)} hari\n\n"
+        f"SCORE INTERNAL: {score_data.get('total_score',0)}/100 — {score_data.get('verdict','WATCH')}\n"
+        f"(Trend {layers.get('trend',0)}/25 | Mom {layers.get('momentum',0)}/20 | "
+        f"Vol {layers.get('volume',0)}/20 | Pat {layers.get('pattern',0)}/15 | "
+        f"FF {layers.get('foreign',0)}/15)\n\n"
+        f"KONTEKS PASAR: IHSG {market_ctx.get('ihsg_change',0):+.2f}% | "
+        f"USD/IDR {market_ctx.get('usd_idr','—')}\n\n"
+        f"== GUNAKAN PENGETAHUANMU UNTUK {code} ==\n\n"
+        "Lengkapi analisis berikut (tandai jika data fundamental mungkin kadaluarsa):\n"
+        "- Profil: sektor, subsektor, model bisnis, posisi kompetitif, estimasi market cap\n"
+        "- Fundamental: kinerja keuangan (revenue, laba, margin, ROE, ROA, DER)\n"
+        "- Valuasi: PER, PBV, EV/EBITDA, dividend yield vs rata-rata sektor\n"
+        "- Sentimen: isu terkini, aksi korporasi, pandangan analis\n"
+        "- Kompetitor: 2 kompetitor utama di sektor yang sama\n\n"
+        "Return JSON dengan schema ini:\n"
+        "{\n"
+        '  "profil": {\n'
+        '    "sektor": "...", "subsektor": "...", "market_cap_est": "...",\n'
+        '    "bisnis": "2-3 kalimat model bisnis dan sumber pendapatan",\n'
+        '    "kompetitif": "1-2 kalimat posisi vs pesaing"\n'
+        "  },\n"
+        '  "fundamental": {\n'
+        '    "kinerja": "3-4 kalimat kinerja keuangan terbaru dengan angka nyata",\n'
+        '    "valuasi": "2-3 kalimat PER/PBV/dividend vs sektor",\n'
+        '    "prospek": "2-3 kalimat proyeksi industri dan strategi bisnis",\n'
+        '    "kesimpulan": "1-2 kalimat kesimpulan fundamental",\n'
+        '    "data_note": "tahun data atau catatan keakuratan"\n'
+        "  },\n"
+        '  "teknikal": {\n'
+        '    "tren_harian": "UPTREND|DOWNTREND|SIDEWAYS",\n'
+        '    "tren_mingguan": "UPTREND|DOWNTREND|SIDEWAYS",\n'
+        '    "tren_bulanan": "UPTREND|DOWNTREND|SIDEWAYS",\n'
+        '    "support_1": <float>, "support_2": <float>,\n'
+        '    "resistance_1": <float>, "resistance_2": <float>,\n'
+        '    "sinyal": "BUY|SELL|NEUTRAL",\n'
+        '    "pattern": "nama pola atau none",\n'
+        '    "target_pendek": <float>, "target_menengah": <float>,\n'
+        '    "kesimpulan": "2-3 kalimat kesimpulan teknikal"\n'
+        "  },\n"
+        '  "sentimen": {\n'
+        '    "asing": "1-2 kalimat aktivitas investor asing",\n'
+        '    "katalis": "1-2 kalimat katalis utama",\n'
+        '    "aksi_korporasi": "aksi korporasi terbaru atau N/A",\n'
+        '    "risiko": "1-2 kalimat risiko utama",\n'
+        '    "kesimpulan": "1-2 kalimat kesimpulan sentimen"\n'
+        "  },\n"
+        '  "rekomendasi": {\n'
+        '    "action": "BUY|HOLD|SELL",\n'
+        '    "conviction": "TINGGI|SEDANG|RENDAH",\n'
+        '    "entry": <float>, "target_1": <float>, "target_2": <float>, "stop_loss": <float>,\n'
+        '    "horizon": "jangka pendek|jangka menengah|jangka panjang",\n'
+        '    "ringkasan": "2-3 kalimat Bahasa Indonesia",\n'
+        '    "risiko_utama": "1 kalimat Bahasa Indonesia"\n'
+        "  },\n"
+        '  "kompetitor": "2-3 kalimat perbandingan dengan 2 kompetitor utama",\n'
+        '  "disclaimer": "Data fundamental berdasarkan pengetahuan AI — verifikasi dengan laporan emiten terbaru."\n'
+        "}"
+    )
+
+    try:
+        resp = _client.messages.create(
+            model=_ANALYSIS_MODEL,
+            max_tokens=2000,
+            system=_RESEARCH_SYSTEM,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        return _parse_json(resp.content[0].text, label=f"Research/{symbol}")
+    except Exception as e:
+        logger.error("Research agent/%s failed: %s", symbol, e)
+        return None
+
+
+# ── Research formatter ────────────────────────────────────────────────────────
+
+_WIB = pytz.timezone("Asia/Jakarta")
+
+_SINYAL_EMOJI  = {"BUY": "🟢", "SELL": "🔴", "NEUTRAL": "🟡"}
+_ACTION_REC_EMOJI = {"BUY": "✅", "HOLD": "⏳", "SELL": "❌"}
+_TREN_ARROW    = {"UPTREND": "↑", "DOWNTREND": "↓", "SIDEWAYS": "→"}
+
+
+def format_research_sections(result: dict, symbol: str) -> list[str]:
+    """
+    Format research output as a list of Telegram HTML strings — one per bagian.
+
+    Each string is a complete, self-contained message guaranteed to be under
+    Telegram's 4096-char limit.  Send them sequentially; do NOT concatenate.
+    """
+    now  = datetime.now(_WIB).strftime("%d %b %Y %H:%M WIB")
+    code = symbol.replace(".JK", "")
+
+    def _e(v) -> str:
+        return html.escape(str(v)) if v else "—"
+
+    def _p(v) -> str:
+        return f"{v:,.0f}" if isinstance(v, (int, float)) and v else "—"
+
+    def _tr(v) -> str:
+        return f"{_TREN_ARROW.get(str(v), '?')} {_e(v)}"
+
+    sections: list[str] = []
+
+    # ── (1/5) Profil ──────────────────────────────────────────────────────────
+    p = result.get("profil", {})
+    sections.append("\n".join([
+        f"<b>🔬 RISET: {code}</b>  <i>{now}</i>",
+        "<b>(1/5) PROFIL EMITEN</b>",
+        "",
+        f"Sektor: <b>{_e(p.get('sektor'))}</b> — {_e(p.get('subsektor'))}",
+        f"Est. Market Cap: {_e(p.get('market_cap_est'))}",
+        "",
+        f"<b>Bisnis:</b> {_e(p.get('bisnis'))}",
+        f"<b>Kompetitif:</b> {_e(p.get('kompetitif'))}",
+    ]))
+
+    # ── (2/5) Fundamental ─────────────────────────────────────────────────────
+    f2 = result.get("fundamental", {})
+    sec2 = [
+        f"<b>🔬 RISET: {code}  (2/5) FUNDAMENTAL</b>",
+        "",
+        f"📈 <b>Kinerja Keuangan</b>",
+        _e(f2.get("kinerja")),
+        "",
+        f"💰 <b>Valuasi</b>",
+        _e(f2.get("valuasi")),
+        "",
+        f"🔭 <b>Prospek</b>",
+        _e(f2.get("prospek")),
+        "",
+        f"<i>Kesimpulan: {_e(f2.get('kesimpulan'))}</i>",
+    ]
+    if f2.get("data_note"):
+        sec2.append(f"<i>⚠️ {_e(f2.get('data_note'))}</i>")
+    sections.append("\n".join(sec2))
+
+    # ── (3/5) Teknikal ────────────────────────────────────────────────────────
+    t      = result.get("teknikal", {})
+    sinyal = str(t.get("sinyal", "NEUTRAL"))
+    sections.append("\n".join([
+        f"<b>🔬 RISET: {code}  (3/5) TEKNIKAL</b>",
+        "",
+        f"Tren: Harian {_tr(t.get('tren_harian'))} | "
+        f"Mingguan {_tr(t.get('tren_mingguan'))} | "
+        f"Bulanan {_tr(t.get('tren_bulanan'))}",
+        "",
+        f"Support   : <code>{_p(t.get('support_1'))} / {_p(t.get('support_2'))}</code>",
+        f"Resistansi: <code>{_p(t.get('resistance_1'))} / {_p(t.get('resistance_2'))}</code>",
+        "",
+        f"Pola: {_e(t.get('pattern', 'none'))}",
+        f"Sinyal: {_SINYAL_EMOJI.get(sinyal, '🟡')} <b>{sinyal}</b>",
+        f"Target Pendek  : <code>{_p(t.get('target_pendek'))}</code>",
+        f"Target Menengah: <code>{_p(t.get('target_menengah'))}</code>",
+        "",
+        f"<i>Kesimpulan: {_e(t.get('kesimpulan'))}</i>",
+    ]))
+
+    # ── (4/5) Sentimen ────────────────────────────────────────────────────────
+    s = result.get("sentimen", {})
+    sections.append("\n".join([
+        f"<b>🔬 RISET: {code}  (4/5) SENTIMEN &amp; KATALIS</b>",
+        "",
+        f"<b>Asing:</b> {_e(s.get('asing'))}",
+        "",
+        f"<b>Katalis:</b> {_e(s.get('katalis'))}",
+        "",
+        f"<b>Aksi Korporasi:</b> {_e(s.get('aksi_korporasi', 'N/A'))}",
+        "",
+        f"<b>Risiko:</b> {_e(s.get('risiko'))}",
+        "",
+        f"<i>Kesimpulan: {_e(s.get('kesimpulan'))}</i>",
+    ]))
+
+    # ── (5/5) Rekomendasi + Kompetitor + Disclaimer ───────────────────────────
+    r          = result.get("rekomendasi", {})
+    action     = str(r.get("action", "HOLD"))
+    conviction = _e(r.get("conviction", "SEDANG"))
+    a_emoji    = _ACTION_REC_EMOJI.get(action, "📌")
+    sec5 = [
+        f"<b>🔬 RISET: {code}  (5/5) REKOMENDASI</b>",
+        "",
+        f"{a_emoji} <b>{action}</b> (Keyakinan: {conviction})",
+        f"Horizon: {_e(r.get('horizon'))}",
+        "",
+        f"Entry    : <code>{_p(r.get('entry'))}</code>",
+        f"Target 1 : <code>{_p(r.get('target_1'))}</code>",
+        f"Target 2 : <code>{_p(r.get('target_2'))}</code>",
+        f"Stop Loss: <code>{_p(r.get('stop_loss'))}</code>",
+        "",
+        f"📝 {_e(r.get('ringkasan'))}",
+        f"⚠️ {_e(r.get('risiko_utama'))}",
+    ]
+    komp = result.get("kompetitor", "")
+    if komp:
+        sec5 += ["", "<b>Kompetitor:</b>", _e(komp)]
+    disc = result.get("disclaimer", "")
+    if disc:
+        sec5 += ["", f"<i>⚠️ {_e(disc)}</i>"]
+    sections.append("\n".join(sec5))
+
+    return sections

@@ -128,12 +128,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     text = (
         "<b>Perintah tersedia:</b>\n\n"
-        "/briefing — kirim morning briefing hari ini\n"
-        "/midday   — briefing pre-Sesi 2 (data Sesi 1)\n"
-        "/scan     — jalankan D-1 scan sekarang\n"
-        "/pick BBCA — analisa satu saham\n"
-        "/status   — status bot dan market\n"
-        "/help     — daftar perintah ini"
+        "/briefing        — morning briefing hari ini\n"
+        "/midday          — briefing pre-Sesi 2 (data Sesi 1)\n"
+        "/scan            — jalankan D-1 scan sekarang\n"
+        "/pick BBCA       — skor teknikal cepat satu saham\n"
+        "/analyze BBCA    — analisa 3-agen (teknikal+simulasi+rekomendasi)\n"
+        "/research BBCA   — riset mendalam 5 bagian (fundamental+teknikal+sentimen)\n"
+        "/status          — status bot dan market\n"
+        "/help            — daftar perintah ini"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -328,6 +330,90 @@ def _run_single_pick(symbol: str) -> dict | None:
     return scan_single(symbol)
 
 
+def _run_analyze(symbol: str) -> str | None:
+    """Blocking helper: 3-agent pipeline on a single stock, formatted for Telegram."""
+    from screener import scan_single
+    from invezgo_client import fetch_market_breadth
+    from agents import run_briefing_pipeline, format_analyze_message
+
+    score_data = scan_single(symbol)
+    if score_data is None:
+        return None
+
+    try:
+        breadth = fetch_market_breadth()
+    except Exception:
+        breadth = {}
+
+    ihsg_data  = (breadth.get("IHSG") or {})
+    market_ctx = {
+        "ihsg_change":    ihsg_data.get("change_pct", 0),
+        "wall_st_change": 0,
+        "usd_idr":        "—",
+        "macro_note":     "",
+    }
+
+    pr = run_briefing_pipeline(
+        symbol     = symbol,
+        score_data = score_data,
+        news_raw   = [],
+        market_ctx = market_ctx,
+    )
+
+    if not pr["pipeline_ok"]:
+        logger.warning("_run_analyze: pipeline incomplete for %s — falling back", symbol)
+        return _format_single_pick(score_data)
+
+    return format_analyze_message(pr, score_data)
+
+
+def _run_research(symbol: str) -> list[str] | None:
+    """Blocking helper: fetch data, compute multi-TF context, run research agent."""
+    from invezgo_client import fetch_daily, fetch_foreign_flow_stock, fetch_market_breadth
+    from indicators import compute_all, latest_snapshot
+    from scorer import score_stock
+    from agents import (
+        run_research_agent, format_research_sections,
+        build_timeframe_ctx, build_sr_levels,
+    )
+
+    df = fetch_daily(symbol, days=365)
+    if df is None or df.empty:
+        logger.warning("_run_research: no data for %s", symbol)
+        return None
+
+    df_ind = compute_all(df)
+    if df_ind.empty:
+        return None
+
+    snap    = latest_snapshot(df_ind)
+    breadth = {}
+    ff      = None
+    try:
+        breadth = fetch_market_breadth()
+        ff      = fetch_foreign_flow_stock(symbol)
+    except Exception:
+        pass
+
+    score_data = score_stock(symbol, snap, df_ind, foreign=ff, breadth=breadth)
+    tf_ctx     = build_timeframe_ctx(df_ind)
+    sr_levels  = build_sr_levels(df_ind)
+
+    ihsg_data  = (breadth.get("IHSG") or {})
+    market_ctx = {
+        "ihsg_change":    ihsg_data.get("change_pct", 0),
+        "wall_st_change": 0,
+        "usd_idr":        "—",
+        "macro_note":     "",
+    }
+
+    result = run_research_agent(symbol, score_data, tf_ctx, sr_levels, market_ctx)
+    if result is None:
+        return None
+
+    return format_research_sections(result, symbol)
+
+
 def _format_single_pick(result: dict) -> str:
     sym    = result["symbol"]
     score  = result["total_score"]
@@ -378,6 +464,65 @@ def _format_single_pick(result: dict) -> str:
             lines.append(f"• <i>{layer_reasons[0]}</i>")
 
     return "\n".join(l for l in lines if l is not None)
+
+
+async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Run 3-agent pipeline on one stock. Usage: /analyze BBCA"""
+    if not _allowed(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /analyze BBCA")
+        return
+
+    raw    = context.args[0].upper().strip()
+    symbol = raw if raw.endswith(".JK") else f"{raw}.JK"
+    await update.message.reply_text(
+        f"🤖 Menjalankan analisa 3-agen untuk {symbol.replace('.JK', '')}...\n"
+        "<i>(±30 detik)</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(_executor, _run_analyze, symbol)
+        if text:
+            await _reply_long(update, text)
+        else:
+            await update.message.reply_text(f"❌ Tidak ada data untuk {symbol}")
+    except Exception as e:
+        logger.exception("cmd_analyze error for %s", symbol)
+        await update.message.reply_text(f"❌ Analisa gagal: {e}")
+
+
+async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Deep 5-section research report. Usage: /research BBCA"""
+    if not _allowed(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /research BBCA")
+        return
+
+    raw    = context.args[0].upper().strip()
+    symbol = raw if raw.endswith(".JK") else f"{raw}.JK"
+    await update.message.reply_text(
+        f"🔬 Menyiapkan riset mendalam untuk <b>{symbol.replace('.JK', '')}</b>...\n"
+        "<i>(±60 detik — analisa 5 bagian: profil, fundamental, teknikal, sentimen, rekomendasi)</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        sections = await loop.run_in_executor(_executor, _run_research, symbol)
+        if not sections:
+            await update.message.reply_text(f"❌ Tidak ada data untuk {symbol}")
+            return
+        for section in sections:
+            await update.message.reply_text(section, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.exception("cmd_research error for %s", symbol)
+        await update.message.reply_text(f"❌ Riset gagal: {e}")
 
 
 # ── Scheduled job callbacks ───────────────────────────────────────────────────
@@ -468,6 +613,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("midday",   cmd_midday))
     app.add_handler(CommandHandler("scan",     cmd_scan))
     app.add_handler(CommandHandler("pick",     cmd_pick))
+    app.add_handler(CommandHandler("analyze",  cmd_analyze))
+    app.add_handler(CommandHandler("research", cmd_research))
     app.add_error_handler(_error_handler)
 
     return app
