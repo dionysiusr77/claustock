@@ -455,6 +455,9 @@ OUTPUT FORMAT (JSON valid, tidak ada teks lain):
 }"""
 
 
+_MIDDAY_MAX_PICKS = 8   # cap to avoid truncating the JSON at max_tokens
+
+
 def _build_midday_prompt(
     morning_candidates: list[dict],
     sesi1_map:          dict[str, dict | None],
@@ -462,7 +465,7 @@ def _build_midday_prompt(
 ) -> str:
     """Build compact JSON payload for the midday Claude call."""
     picks_payload = []
-    for r in morning_candidates:
+    for r in morning_candidates[:_MIDDAY_MAX_PICKS]:
         sym    = r["symbol"]
         snap   = r.get("snapshot", {})
         levels = r.get("trade_levels") or {}
@@ -507,7 +510,7 @@ def generate_midday_briefing(
     try:
         response = _client.messages.create(
             model=config.CLAUDE_MODEL,
-            max_tokens=1500,
+            max_tokens=2500,
             system=[
                 {
                     "type": "text",
