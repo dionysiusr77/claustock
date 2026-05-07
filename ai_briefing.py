@@ -70,7 +70,11 @@ OUTPUT FORMAT (kembalikan JSON valid, tidak ada teks lain):
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
 
-def _build_user_prompt(scan_data: dict, breadth_summary: dict) -> str:
+def _build_user_prompt(
+    scan_data:       dict,
+    breadth_summary: dict,
+    for_date:        datetime | None = None,
+) -> str:
     """Compact JSON payload — only the fields Claude needs."""
 
     candidates = scan_data.get("candidates", [])
@@ -107,8 +111,9 @@ def _build_user_prompt(scan_data: dict, breadth_summary: dict) -> str:
             },
         })
 
+    target_dt = for_date or datetime.now(_WIB)
     payload = {
-        "date":    datetime.now(_WIB).strftime("%A, %d %b %Y"),
+        "date":    target_dt.strftime("%A, %d %b %Y"),
         "market":  breadth_summary,
         "candidates": picks_payload,
     }
@@ -181,12 +186,16 @@ def _parse_claude_json(raw: str, label: str = "") -> dict | None:
 
 # ── API call ──────────────────────────────────────────────────────────────────
 
-def generate_briefing(scan_data: dict, breadth_summary: dict) -> dict | None:
+def generate_briefing(
+    scan_data:       dict,
+    breadth_summary: dict,
+    for_date:        datetime | None = None,
+) -> dict | None:
     """
     Call Claude and return parsed briefing JSON.
     Returns None on failure (caller falls back to rule-based format).
     """
-    user_prompt = _build_user_prompt(scan_data, breadth_summary)
+    user_prompt = _build_user_prompt(scan_data, breadth_summary, for_date)
 
     try:
         response = _client.messages.create(
@@ -275,12 +284,14 @@ def format_telegram(
     scan_data:       dict,
     breadth_summary: dict,
     pipeline_map:    dict | None = None,
+    for_date:        datetime | None = None,
 ) -> str:
     """
     Format briefing JSON into a Telegram-ready HTML string.
     Telegram HTML supports: <b>, <i>, <code>, <pre>
     """
-    now       = datetime.now(_WIB).strftime("%A, %d %b %Y")
+    target_dt = for_date or datetime.now(_WIB)
+    now       = target_dt.strftime("%A, %d %b %Y")
     sentiment = briefing.get("sentiment", "NEUTRAL")
     fg_emoji  = _SENTIMENT_EMOJI.get(sentiment, "😐")
     stats     = scan_data.get("stats", {})
@@ -645,14 +656,17 @@ def build_briefing(
     scan_data:       dict,
     breadth_summary: dict,
     pipeline_map:    dict | None = None,
+    for_date:        datetime | None = None,
 ) -> str:
     """
     Full pipeline: generate → format → return Telegram string.
     Falls back to rule-based if Claude API fails.
+    Pass for_date to stamp the briefing with a specific date (e.g. next trading day
+    when building from the EOD scan at 16:30).
     """
-    briefing = generate_briefing(scan_data, breadth_summary)
+    briefing = generate_briefing(scan_data, breadth_summary, for_date)
     if briefing is None:
         logger.warning("Falling back to rule-based briefing")
         briefing = _rule_based_briefing(scan_data, breadth_summary)
 
-    return format_telegram(briefing, scan_data, breadth_summary, pipeline_map)
+    return format_telegram(briefing, scan_data, breadth_summary, pipeline_map, for_date)

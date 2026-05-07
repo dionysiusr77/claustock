@@ -12,7 +12,7 @@ import logging
 import pytz
 
 import config
-from telegram_bot import build_app, job_eod_scan, job_morning_briefing, job_midday_briefing
+from telegram_bot import build_app, job_eod_scan, job_eod_report, job_morning_briefing, job_midday_briefing
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -40,6 +40,17 @@ def main() -> None:
     jq  = app.job_queue
 
     # ── Scheduled jobs (Mon–Fri only) ─────────────────────────────────────────
+    jq.run_daily(
+        job_eod_report,
+        time=datetime.time(
+            config.EOD_REPORT_TIME[0],
+            config.EOD_REPORT_TIME[1],
+            tzinfo=_WIB,
+        ),
+        days=(0, 1, 2, 3, 4),
+        name="eod_report",
+    )
+
     jq.run_daily(
         job_eod_scan,
         time=datetime.time(
@@ -74,7 +85,9 @@ def main() -> None:
     )
 
     logger.info(
-        "Jobs scheduled: EOD scan %02d:%02d | Briefing %02d:%02d | Midday %02d:%02d WIB",
+        "Jobs scheduled: EOD report %02d:%02d | EOD scan %02d:%02d | "
+        "Briefing %02d:%02d | Midday %02d:%02d WIB",
+        *config.EOD_REPORT_TIME,
         *config.EOD_SCAN_TIME,
         *config.BRIEFING_TIME,
         *config.MIDDAY_TIME,

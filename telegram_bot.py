@@ -14,7 +14,7 @@ Commands:
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 from telegram import Bot, Update
@@ -130,6 +130,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "<b>Perintah tersedia:</b>\n\n"
         "/briefing        — morning briefing hari ini\n"
         "/midday          — briefing pre-Sesi 2 (data Sesi 1)\n"
+        "/eod             — laporan pasar harian (PnL picks + watchlist)\n"
         "/scan            — jalankan D-1 scan sekarang\n"
         "/pick BBCA       — skor teknikal cepat satu saham\n"
         "/analyze BBCA    — analisa 3-agen (teknikal+simulasi+rekomendasi)\n"
@@ -244,6 +245,14 @@ def _run_full_scan() -> dict:
     return run_scan()
 
 
+def _next_trading_date(from_dt: datetime) -> datetime:
+    """Return the next weekday date from from_dt (skips Saturday/Sunday)."""
+    d = from_dt + timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
 def _build_briefing(scan_data: dict) -> str:
     from market_breadth import build_breadth_summary
     from ai_briefing import build_briefing
@@ -291,7 +300,8 @@ def _build_briefing(scan_data: dict) -> str:
         reverse=True,
     )
 
-    text = build_briefing(scan_data, breadth_summary, pipeline_map)
+    for_date = _next_trading_date(datetime.now(_WIB))
+    text = build_briefing(scan_data, breadth_summary, pipeline_map, for_date)
     save_scan(scan_data)
     save_briefing(text)
     return text
@@ -414,6 +424,66 @@ def _run_research(symbol: str) -> list[str] | None:
     return format_research_sections(result, symbol)
 
 
+def _build_eod_report() -> str | None:
+    """Blocking helper: load scan picks, fetch EOD prices, build PnL report."""
+    from firestore_client import load_latest_scan
+    from invezgo_client import fetch_intraday_batch, fetch_intraday_sesi1
+    from agents import run_eod_report_agent, format_eod_report
+
+    scan_data = load_latest_scan()
+    if not scan_data:
+        logger.warning("EOD report: no saved scan found")
+        return None
+
+    candidates = scan_data.get("candidates", [])
+    if not candidates:
+        logger.warning("EOD report: no candidates in saved scan")
+        return None
+
+    picks     = candidates[:5]
+    watchlist = candidates[5:10]
+    all_c     = picks + watchlist
+
+    symbols     = [c["symbol"] for c in all_c]
+    prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in all_c}
+    eod_map     = fetch_intraday_batch(symbols, prev_closes)
+
+    # IHSG final close
+    ihsg_eod = fetch_intraday_sesi1("COMPOSITE", prev_close=None, kind="index") or {}
+
+    def _perf(cand: dict) -> dict:
+        sym    = cand["symbol"]
+        d1     = (cand.get("snapshot") or {}).get("close") or 0
+        intra  = eod_map.get(sym) or {}
+        today  = intra.get("close") or d1
+        pct    = round((today - d1) / d1 * 100, 2) if d1 else (intra.get("pct_change") or 0)
+        levels = cand.get("trade_levels") or {}
+        return {
+            "symbol":      sym,
+            "d1_close":    d1,
+            "today_close": today,
+            "pct_change":  pct,
+            "entry":       levels.get("entry"),
+            "target":      levels.get("target"),
+            "stop_loss":   levels.get("stop_loss"),
+        }
+
+    picks_perf     = [_perf(c) for c in picks]
+    watchlist_perf = [_perf(c) for c in watchlist]
+
+    ff_data    = scan_data.get("foreign_market") or {}
+    ff_net_idr = ff_data.get("net_val_idr", 0) or ff_data.get("net_buy_idr", 0) or 0
+    market_data = {
+        "ihsg_close":        ihsg_eod.get("close", 0) or 0,
+        "ihsg_change_pct":   ihsg_eod.get("pct_change", 0) or 0,
+        "foreign_net_idr":   ff_net_idr,
+        "foreign_direction": "NET BUY" if ff_net_idr >= 0 else "NET SELL",
+    }
+
+    agent_result = run_eod_report_agent(picks_perf, watchlist_perf, market_data)
+    return format_eod_report(picks_perf, watchlist_perf, market_data, agent_result)
+
+
 def _format_single_pick(result: dict) -> str:
     sym    = result["symbol"]
     score  = result["total_score"]
@@ -525,6 +595,30 @@ async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"❌ Riset gagal: {e}")
 
 
+async def cmd_eod(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """On-demand EOD market report with PnL on picks and watchlist. Usage: /eod"""
+    if not _allowed(update):
+        return
+
+    await update.message.reply_text(
+        "📊 Menyiapkan laporan pasar harian...\n<i>(±30 detik)</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(_executor, _build_eod_report)
+        if text:
+            await _reply_long(update, text)
+        else:
+            await update.message.reply_text(
+                "❌ Belum ada data scan hari ini. Jalankan /scan terlebih dahulu."
+            )
+    except Exception as e:
+        logger.exception("cmd_eod error")
+        await update.message.reply_text(f"❌ Laporan gagal: {e}")
+
+
 # ── Scheduled job callbacks ───────────────────────────────────────────────────
 
 async def job_eod_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -537,6 +631,21 @@ async def job_eod_scan(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("EOD scan complete — briefing saved")
     except Exception:
         logger.exception("EOD scan job failed")
+
+
+async def job_eod_report(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Post-market PnL report at 16:00 WIB."""
+    logger.info("EOD report job triggered")
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(_executor, _build_eod_report)
+        if text:
+            await broadcast(context.bot, text)
+        else:
+            logger.warning("EOD report: no text generated")
+    except Exception:
+        logger.exception("EOD report job failed")
+        await broadcast(context.bot, "⚠️ Laporan pasar harian gagal dibuat. Cek log.")
 
 
 async def job_midday_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -590,8 +699,9 @@ async def _on_startup(app: Application) -> None:
         f"🟢 <b>Claustock IDX v2 online</b>\n"
         f"<i>{now}</i>\n\n"
         f"Universe: {config.UNIVERSE} | Min score: {config.MIN_SCORE}\n"
-        f"EOD scan: {config.EOD_SCAN_TIME[0]:02d}:{config.EOD_SCAN_TIME[1]:02d} WIB | "
-        f"Briefing: {config.BRIEFING_TIME[0]:02d}:{config.BRIEFING_TIME[1]:02d} WIB"
+        f"Briefing: {config.BRIEFING_TIME[0]:02d}:{config.BRIEFING_TIME[1]:02d} WIB | "
+        f"EOD report: {config.EOD_REPORT_TIME[0]:02d}:{config.EOD_REPORT_TIME[1]:02d} WIB | "
+        f"EOD scan: {config.EOD_SCAN_TIME[0]:02d}:{config.EOD_SCAN_TIME[1]:02d} WIB"
     )
     await broadcast(app.bot, text)
 
@@ -615,6 +725,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("pick",     cmd_pick))
     app.add_handler(CommandHandler("analyze",  cmd_analyze))
     app.add_handler(CommandHandler("research", cmd_research))
+    app.add_handler(CommandHandler("eod",      cmd_eod))
     app.add_error_handler(_error_handler)
 
     return app

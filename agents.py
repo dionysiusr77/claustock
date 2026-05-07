@@ -946,3 +946,178 @@ def format_research_sections(result: dict, symbol: str) -> list[str]:
     sections.append("\n".join(sec5))
 
     return sections
+
+
+# ── EOD Report helpers ────────────────────────────────────────────────────────
+
+def _pick_status_label(p: dict) -> str:
+    today  = p.get("today_close") or 0
+    target = p.get("target")      or 0
+    sl     = p.get("stop_loss")   or 0
+    entry  = p.get("entry")       or 0
+    if target and today >= target:
+        return "target ✅"
+    if sl and today <= sl:
+        return "SL kena 🛑"
+    if entry and today >= entry:
+        return "di atas entry"
+    return "di bawah entry"
+
+
+# ── EOD Report Agent (Haiku) ──────────────────────────────────────────────────
+
+_EOD_SYSTEM = (
+    "Kamu adalah analis pasar saham IDX Indonesia yang memberikan ringkasan "
+    "akhir hari perdagangan. Berikan narasi singkat (3-4 kalimat), padat, "
+    "dan insightful dalam Bahasa Indonesia. Respond only in valid JSON."
+)
+
+
+def run_eod_report_agent(
+    picks_perf:     list[dict],
+    watchlist_perf: list[dict],
+    market_data:    dict,
+) -> dict | None:
+    ihsg_chg = market_data.get("ihsg_change_pct", 0) or 0
+    ff_dir   = market_data.get("foreign_direction", "—")
+    ff_net   = abs(market_data.get("foreign_net_idr", 0)) / 1e9
+
+    picks_lines = []
+    for p in picks_perf:
+        sym    = p["symbol"].replace(".JK", "")
+        pct    = p.get("pct_change", 0) or 0
+        status = _pick_status_label(p)
+        picks_lines.append(f"  {sym}: {pct:+.1f}% ({status})")
+
+    watch_lines = []
+    for p in watchlist_perf:
+        sym = p["symbol"].replace(".JK", "")
+        pct = p.get("pct_change", 0) or 0
+        watch_lines.append(f"  {sym}: {pct:+.1f}%")
+
+    picks_str = "\n".join(picks_lines) if picks_lines else "  (tidak ada)"
+    watch_str = "\n".join(watch_lines) if watch_lines else "  (tidak ada)"
+
+    top_syms = [p["symbol"].replace(".JK", "") for p in picks_perf[:3]]
+    top_syms += [p["symbol"].replace(".JK", "") for p in watchlist_perf[:2]]
+
+    user_prompt = (
+        f"Buat ringkasan akhir hari perdagangan IDX.\n\n"
+        f"DATA PASAR HARI INI:\n"
+        f"- IHSG: {ihsg_chg:+.2f}%\n"
+        f"- Asing: {ff_dir} Rp {ff_net:.1f}B IDR\n\n"
+        f"PERFORMA PICKS:\n{picks_str}\n\n"
+        f"WATCHLIST:\n{watch_str}\n\n"
+        "Tulis ringkasan akhir hari dalam Bahasa Indonesia. "
+        "Fokus pada: kondisi market hari ini, highlight picks yang menonjol, "
+        "dan pandangan besok.\n\n"
+        f"Saham relevan untuk besok: {', '.join(top_syms)}\n\n"
+        "Return JSON:\n"
+        "{\n"
+        '  "narrative": "<3-4 kalimat ringkasan kondisi pasar dan picks>",\n'
+        '  "tomorrow_watch": ["SYM1", "SYM2", "SYM3"],\n'
+        '  "sentiment": "POSITIF|NEGATIF|MIXED"\n'
+        "}"
+    )
+
+    try:
+        resp = _client.messages.create(
+            model=_CONCLUSION_MODEL,
+            max_tokens=300,
+            system=_EOD_SYSTEM,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        return _parse_json(resp.content[0].text, label="EOD/agent")
+    except Exception as e:
+        logger.error("EOD agent failed: %s", e)
+        return None
+
+
+def format_eod_report(
+    picks_perf:     list[dict],
+    watchlist_perf: list[dict],
+    market_data:    dict,
+    agent_result:   dict | None,
+) -> str:
+    now    = datetime.now(_WIB)
+    today  = now.strftime("%d %b %Y")
+
+    ihsg_close = market_data.get("ihsg_close", 0) or 0
+    ihsg_chg   = market_data.get("ihsg_change_pct", 0) or 0
+    ff_dir     = market_data.get("foreign_direction", "—")
+    ff_net     = abs(market_data.get("foreign_net_idr", 0)) / 1e9
+
+    def _pct_emoji(pct: float) -> str:
+        if pct >= 1.0:   return "🟢"
+        if pct <= -1.5:  return "🔴"
+        return "🟡"
+
+    def _fmt_px(v) -> str:
+        return f"<code>{v:,.0f}</code>" if v else ""
+
+    lines: list[str] = []
+    lines.append(f"<b>📊 LAPORAN PASAR — {today}</b>")
+    lines.append("")
+
+    # IHSG + foreign
+    ihsg_sign = "+" if ihsg_chg >= 0 else ""
+    ihsg_str  = _fmt_px(ihsg_close) if ihsg_close else "<i>N/A</i>"
+    ihsg_chg_str = f"<i>{ihsg_sign}{ihsg_chg:.2f}%</i>" if ihsg_chg else ""
+    lines.append(f"🏛 <b>IHSG:</b> {ihsg_str}  {ihsg_chg_str}".strip())
+    lines.append(f"💱 Asing: {html.escape(ff_dir)} Rp {ff_net:.1f}B")
+    lines.append("")
+
+    # Picks
+    lines.append("<b>📋 PICKS HARI INI</b>")
+    if picks_perf:
+        for p in picks_perf:
+            sym      = p["symbol"].replace(".JK", "")
+            pct      = p.get("pct_change", 0) or 0
+            today_px = p.get("today_close", 0) or 0
+            emoji    = _pct_emoji(pct)
+            sign     = "+" if pct >= 0 else ""
+            status   = html.escape(_pick_status_label(p))
+            lines.append(
+                f"{emoji} <code>{sym:<5}</code> {_fmt_px(today_px)}  "
+                f"<b>{sign}{pct:.1f}%</b>  {status}"
+            )
+    else:
+        lines.append("<i>Tidak ada picks hari ini</i>")
+    lines.append("")
+
+    # Watchlist
+    if watchlist_perf:
+        lines.append("<b>👁 WATCHLIST</b>")
+        for p in watchlist_perf:
+            sym      = p["symbol"].replace(".JK", "")
+            pct      = p.get("pct_change", 0) or 0
+            today_px = p.get("today_close", 0) or 0
+            emoji    = _pct_emoji(pct)
+            sign     = "+" if pct >= 0 else ""
+            lines.append(
+                f"{emoji} <code>{sym:<5}</code> {_fmt_px(today_px)}  "
+                f"<b>{sign}{pct:.1f}%</b>"
+            )
+        lines.append("")
+
+    # AI narrative
+    if agent_result:
+        narrative = agent_result.get("narrative", "")
+        if narrative:
+            lines.append("<b>🤖 NARASI PASAR</b>")
+            lines.append(html.escape(narrative))
+            lines.append("")
+
+        tomorrow = agent_result.get("tomorrow_watch") or []
+        if tomorrow:
+            watch_str = " · ".join(
+                html.escape(s.replace(".JK", "")) for s in tomorrow[:5]
+            )
+            lines.append(f"📌 <b>Besok pantau:</b> {watch_str}")
+            lines.append("")
+
+    lines.append(
+        f"<i>Data ~{now.strftime('%H:%M')} WIB · Bukan rekomendasi investasi</i>"
+    )
+
+    return "\n".join(lines)

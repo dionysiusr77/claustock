@@ -14,6 +14,7 @@ SESSION2_END   = (15, 49)
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 EOD_SCAN_TIME     = (16, 30)   # nightly D-1 full universe scan (after market close)
+EOD_REPORT_TIME   = (16, 0)    # post-market PnL report (after 15:49 close)
 BRIEFING_TIME     = (8, 30)    # morning briefing delivery
 MIDDAY_TIME       = (13, 15)   # pre-Sesi 2 briefing (15 min before 13:30 open)
 
