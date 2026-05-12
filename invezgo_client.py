@@ -248,11 +248,21 @@ def fetch_daily_batch(symbols: list[str], days: int = 365, min_rows: int = 60) -
         fail_rate = len(failed) / total if total else 0
         msg = "fetch_daily_batch: %d/%d no data — %s"
         args = (len(failed), total, ", ".join(failed[:5]) + (" ..." if len(failed) > 5 else ""))
-        # Only warn if >30% fail — likely an API issue; otherwise it's normal (new/suspended stocks)
         if fail_rate > 0.30:
             logger.warning(msg, *args)
         else:
             logger.debug(msg, *args)
+        # Spot-check one failure to surface the actual API error when most downloads fail
+        if fail_rate > 0.50:
+            try:
+                from_date, to_date = _date_range(7)
+                _chart_request(_code(failed[0]), from_date, to_date, kind="stock")
+            except Exception as spot_e:
+                logger.error(
+                    "API connectivity spot-check failed for %s: %s "
+                    "— likely API key / quota / network issue",
+                    failed[0], spot_e,
+                )
     logger.info("fetch_daily_batch complete: %d/%d symbols OK", ok, total)
     return result
 
@@ -350,7 +360,8 @@ def _fetch_ihsg_invezgo() -> dict | None:
         raw = _chart_request("COMPOSITE", from_date, to_date, kind="index")
         df = _parse_ohlcv(raw)
         if df.empty or len(df) < 2:
-            logger.debug("IHSG index chart: insufficient rows (%d)", len(df))
+            logger.warning("IHSG index chart: insufficient rows (%d) — raw type: %s, sample: %s",
+                           len(df), type(raw).__name__, str(raw)[:200])
             return None
         prev = float(df["close"].iloc[-2])
         last = float(df["close"].iloc[-1])
@@ -362,7 +373,7 @@ def _fetch_ihsg_invezgo() -> dict | None:
             "direction":  "UP" if chg > 0 else ("DOWN" if chg < 0 else "FLAT"),
         }
     except Exception as e:
-        logger.debug("Invezgo IHSG index chart failed: %s", e)
+        logger.warning("Invezgo IHSG index chart failed: %s — check API key / endpoint", e)
         return None
 
 
@@ -617,7 +628,7 @@ def filter_liquid(
                 logger.info("Invezgo screener: %d/%d liquid", len(liquid), len(symbols))
                 return liquid
     except Exception as e:
-        logger.debug("Invezgo screener failed, falling back to OHLCV filter: %s", e)
+        logger.warning("Invezgo screener failed, falling back to OHLCV filter: %s", e)
 
     # ── Fallback: OHLCV-based filter (same as fetcher.filter_liquid) ──────────
     data = fetch_daily_batch(symbols, days=30, min_rows=5)

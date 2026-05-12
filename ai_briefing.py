@@ -308,7 +308,7 @@ def format_telegram(
         f"<b>📊 MORNING BRIEFING IDX</b>",
         f"<i>{now}</i>",
         "",
-        f"IHSG: {breadth_summary.get('ihsg_close', '—')} "
+        f"IHSG: {breadth_summary.get('ihsg_close') or '—'} "
         f"({ihsg_dir}{abs(ihsg_chg):.2f}%) | "
         f"Asing: {fm_dir} {abs(fm_net):.1f}B IDR",
         f"A/D: {breadth_summary.get('advance','—')}/{breadth_summary.get('decline','—')} | "
