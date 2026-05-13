@@ -174,6 +174,9 @@ def _parse_claude_json(raw: str, label: str = "") -> dict | None:
     text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("\t", " ")
     # Re-apply trailing comma fix after whitespace collapse
     text = _re.sub(r",\s*([}\]])", r"\1", text)
+    # Fix missing commas between adjacent objects/arrays
+    text = _re.sub(r"}\s*\{", "},{", text)
+    text = _re.sub(r"]\s*\[", "],[", text)
 
     try:
         return json.loads(text)

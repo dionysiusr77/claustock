@@ -52,9 +52,13 @@ def _parse_json(raw: str, label: str = "") -> dict | None:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+    # Collapse whitespace (fixes bare newlines inside string values)
     text = (text.replace("\r\n", " ").replace("\r", " ")
                 .replace("\n", " ").replace("\t", " "))
     text = re.sub(r",\s*([}\]])", r"\1", text)
+    # Fix missing commas between adjacent objects/arrays (Claude omits these occasionally)
+    text = re.sub(r"}\s*\{", "},{", text)
+    text = re.sub(r"]\s*\[", "],[", text)
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:

@@ -138,8 +138,8 @@ def run_scan(universe_tier: str = config.UNIVERSE) -> dict:
     first_pass.sort(key=lambda x: x["total_score"], reverse=True)
     logger.info("First-pass scored: %d stocks", len(first_pass))
 
-    # ── Step 7: Foreign flow for top 2× candidates ───────────────────────────
-    top_n  = config.TOP_N_AI * 2
+    # ── Step 7: Foreign flow for top candidates only (saves API quota) ──────────
+    top_n  = config.TOP_N_AI   # was TOP_N_AI * 2 — halves FF call count
     top_syms = [r["symbol"] for r in first_pass[:top_n]]
     logger.info("Fetching foreign flow for top %d stocks...", len(top_syms))
     ff_map = _fetch_ff_batch(top_syms)

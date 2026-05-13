@@ -322,8 +322,9 @@ def _build_midday_briefing() -> str | None:
         logger.warning("midday: saved scan has no candidates")
         return None
 
-    symbols     = [c["symbol"] for c in candidates]
-    prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in candidates}
+    tracked     = candidates[:8]   # top 8 only — saves intraday API calls
+    symbols     = [c["symbol"] for c in tracked]
+    prev_closes = {c["symbol"]: (c.get("snapshot") or {}).get("close") for c in tracked}
     sesi1_map   = fetch_intraday_batch(symbols, prev_closes)
 
     # IHSG Sesi 1 — uses /analysis/intraday-index/COMPOSITE endpoint
@@ -441,7 +442,7 @@ def _build_eod_report() -> str | None:
         return None
 
     picks     = candidates[:5]
-    watchlist = candidates[5:10]
+    watchlist = candidates[5:8]   # top 3 watchlist only — saves intraday API calls
     all_c     = picks + watchlist
 
     symbols     = [c["symbol"] for c in all_c]

@@ -377,12 +377,23 @@ def _fetch_ihsg_invezgo() -> dict | None:
         return None
 
 
+_breadth_cache: dict = {}
+_breadth_cache_ts: float = 0.0
+_BREADTH_TTL = 3600   # 1 hour — breadth data doesn't change intraday
+
+
 def fetch_market_breadth() -> dict:
     """
     Fetch yesterday's close + change% for IHSG and sectoral indices.
-    Uses yfinance batch for sectors. IHSG is fetched via Invezgo first
-    (more reliable than ^JKSE on yfinance), with yfinance as fallback.
+    Result is cached in-process for 1 hour to avoid redundant API calls
+    (scan, scan_single, analyze, research all call this).
     """
+    import time
+    global _breadth_cache, _breadth_cache_ts
+    if _breadth_cache and (time.time() - _breadth_cache_ts) < _BREADTH_TTL:
+        logger.debug("fetch_market_breadth: returning cached result")
+        return _breadth_cache
+
     from fetcher import fetch_market_breadth as _yf_breadth
     result = _yf_breadth()
 
@@ -414,6 +425,8 @@ def fetch_market_breadth() -> dict:
     if not result.get("IHSG", {}).get("close"):
         logger.warning("IHSG data unavailable — market breadth header will show None")
 
+    _breadth_cache    = result
+    _breadth_cache_ts = time.time()
     return result
 
 
